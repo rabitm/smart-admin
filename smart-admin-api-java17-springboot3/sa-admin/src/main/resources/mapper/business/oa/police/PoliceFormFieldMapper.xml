@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="net.lab1024.sa.admin.module.business.oa.police.form.dao.PoliceFormFieldDao">
+
+    <!-- 根据模板ID获取字段列表 -->
+    <select id="getFieldsByTemplateId" resultType="net.lab1024.sa.admin.module.business.oa.police.form.domain.entity.PoliceFormFieldEntity">
+        SELECT * FROM t_police_form_field
+        WHERE template_id = #{templateId}
+          AND status = 1
+        ORDER BY step_number, sort_order, id
+    </select>
+
+    <!-- 根据模板ID和步骤号获取字段列表 -->
+    <select id="getFieldsByTemplateAndStep" resultType="net.lab1024.sa.admin.module.business.oa.police.form.domain.entity.PoliceFormFieldEntity">
+        SELECT * FROM t_police_form_field
+        WHERE template_id = #{templateId}
+          AND step_number = #{stepNumber}
+          AND status = 1
+        ORDER BY sort_order, id
+    </select>
+
+    <!-- 批量保存字段 -->
+    <insert id="batchInsertFields" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO t_police_form_field (
+            template_id, field_key, field_label, field_type, is_required,
+            field_icon, placeholder, field_options, quick_options, dict_code, parent_field_id,
+            sort_order, step_number, validation_rules, default_value, create_user_id
+        ) VALUES
+        <foreach collection="fields" item="field" separator=",">
+            (
+                #{field.templateId}, #{field.fieldKey}, #{field.fieldLabel}, #{field.fieldType}, #{field.isRequired},
+                #{field.fieldIcon}, #{field.placeholder}, #{field.fieldOptions}, #{field.quickOptions}, #{field.dictCode}, #{field.parentFieldId},
+                #{field.sortOrder}, #{field.stepNumber}, #{field.validationRules}, #{field.defaultValue}, #{field.createUserId}
+            )
+        </foreach>
+    </insert>
+
+    <!-- 根据模板ID删除所有字段 -->
+    <delete id="deleteByTemplateId">
+        DELETE FROM t_police_form_field WHERE template_id = #{templateId}
+    </delete>
+
+</mapper>

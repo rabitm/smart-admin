@@ -46,7 +46,7 @@ public class AdminInterceptor implements HandlerInterceptor {
 
         // OPTIONS请求直接return
         if (HttpMethod.OPTIONS.toString().equals(request.getMethod())) {
-            response.setStatus(HttpStatus.NO_CONTENT.value());
+            response.setStatus(HttpStatus.OK.value());
             return false;
         }
 

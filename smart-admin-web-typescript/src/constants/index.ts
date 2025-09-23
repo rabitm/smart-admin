@@ -17,6 +17,7 @@ import file from './support/file-const';
 import notice from './business/oa/notice-const';
 import loginLog from './support/login-log-const';
 import enterprise from './business/oa/enterprise-const';
+import policeReport from './business/oa/police-report-const';
 import message from './business/message/message-const';
 import codeGeneratorConst from './support/code-generator-const';
 import changeLogConst from './support/change-log-const';
@@ -35,6 +36,7 @@ export default {
   ...file,
   ...notice,
   ...enterprise,
+  ...policeReport,
   ...message,
   ...codeGeneratorConst,
   ...changeLogConst,

@@ -1,0 +1,213 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="net.lab1024.sa.admin.module.business.oa.police.dao.PoliceReportDao">
+
+    <update id="deletePoliceReport">
+        UPDATE t_oa_police_report
+        SET deleted_flag = #{deletedFlag}
+        WHERE report_id = #{reportId}
+    </update>
+
+    <select id="queryByReportNumber"
+            resultType="net.lab1024.sa.admin.module.business.oa.police.domain.entity.PoliceReportEntity">
+        SELECT *
+        FROM t_oa_police_report
+        WHERE report_number = #{reportNumber}
+        AND deleted_flag = #{deletedFlag}
+        <if test="excludeReportId != null">
+            AND report_id != #{excludeReportId}
+        </if>
+    </select>
+
+    <select id="queryPage" resultType="net.lab1024.sa.admin.module.business.oa.police.domain.vo.PoliceReportVO">
+        SELECT report_id,
+               report_number,
+               report_type,
+               CASE report_type
+                   WHEN 1 THEN '刑事案件'
+                   WHEN 2 THEN '交通事故'
+                   WHEN 3 THEN '治安案件'
+                   WHEN 4 THEN '火灾事故'
+                   WHEN 5 THEN '医疗急救'
+                   WHEN 6 THEN '民事纠纷'
+                   WHEN 99 THEN '其他'
+                   ELSE '未知'
+               END AS report_type_name,
+               report_level,
+               CASE report_level
+                   WHEN 1 THEN '紧急'
+                   WHEN 2 THEN '高'
+                   WHEN 3 THEN '中'
+                   WHEN 4 THEN '低'
+                   ELSE '未知'
+               END AS report_level_name,
+               reporter_name,
+               reporter_phone,
+               reporter_id_card,
+               report_time,
+               incident_location,
+               description,
+               status,
+               CASE status
+                   WHEN 1 THEN '待处理'
+                   WHEN 2 THEN '处理中'
+                   WHEN 3 THEN '已完成'
+                   WHEN 4 THEN '已关闭'
+                   ELSE '未知'
+               END AS status_name,
+               handler_id,
+               handler_name,
+               handle_result,
+               handle_time,
+               attachments,
+               remark,
+               create_user_id,
+               create_user_name,
+               create_time,
+               update_time
+        FROM t_oa_police_report
+        <where>
+            deleted_flag = 0
+            <if test="queryForm.reportNumber != null and queryForm.reportNumber != ''">
+                AND report_number LIKE CONCAT('%', #{queryForm.reportNumber}, '%')
+            </if>
+            <if test="queryForm.reportType != null">
+                AND report_type = #{queryForm.reportType}
+            </if>
+            <if test="queryForm.reportLevel != null">
+                AND report_level = #{queryForm.reportLevel}
+            </if>
+            <if test="queryForm.reporterName != null and queryForm.reporterName != ''">
+                AND reporter_name LIKE CONCAT('%', #{queryForm.reporterName}, '%')
+            </if>
+            <if test="queryForm.reporterPhone != null and queryForm.reporterPhone != ''">
+                AND reporter_phone LIKE CONCAT('%', #{queryForm.reporterPhone}, '%')
+            </if>
+            <if test="queryForm.status != null">
+                AND status = #{queryForm.status}
+            </if>
+            <if test="queryForm.handlerName != null and queryForm.handlerName != ''">
+                AND handler_name LIKE CONCAT('%', #{queryForm.handlerName}, '%')
+            </if>
+            <if test="queryForm.incidentLocation != null and queryForm.incidentLocation != ''">
+                AND incident_location LIKE CONCAT('%', #{queryForm.incidentLocation}, '%')
+            </if>
+            <if test="queryForm.reportTimeStart != null">
+                AND report_time &gt;= #{queryForm.reportTimeStart}
+            </if>
+            <if test="queryForm.reportTimeEnd != null">
+                AND report_time &lt;= #{queryForm.reportTimeEnd}
+            </if>
+            <if test="queryForm.createTimeStart != null">
+                AND create_time &gt;= #{queryForm.createTimeStart}
+            </if>
+            <if test="queryForm.createTimeEnd != null">
+                AND create_time &lt;= #{queryForm.createTimeEnd}
+            </if>
+        </where>
+        ORDER BY report_time DESC, create_time DESC
+    </select>
+
+    <select id="getDetail" resultType="net.lab1024.sa.admin.module.business.oa.police.domain.vo.PoliceReportVO">
+        SELECT report_id,
+               report_number,
+               report_type,
+               CASE report_type
+                   WHEN 1 THEN '刑事案件'
+                   WHEN 2 THEN '交通事故'
+                   WHEN 3 THEN '治安案件'
+                   WHEN 4 THEN '火灾事故'
+                   WHEN 5 THEN '医疗急救'
+                   WHEN 6 THEN '民事纠纷'
+                   WHEN 99 THEN '其他'
+                   ELSE '未知'
+               END AS report_type_name,
+               report_level,
+               CASE report_level
+                   WHEN 1 THEN '紧急'
+                   WHEN 2 THEN '高'
+                   WHEN 3 THEN '中'
+                   WHEN 4 THEN '低'
+                   ELSE '未知'
+               END AS report_level_name,
+               reporter_name,
+               reporter_phone,
+               reporter_id_card,
+               report_time,
+               incident_location,
+               description,
+               status,
+               CASE status
+                   WHEN 1 THEN '待处理'
+                   WHEN 2 THEN '处理中'
+                   WHEN 3 THEN '已完成'
+                   WHEN 4 THEN '已关闭'
+                   ELSE '未知'
+               END AS status_name,
+               handler_id,
+               handler_name,
+               handle_result,
+               handle_time,
+               attachments,
+               remark,
+               create_user_id,
+               create_user_name,
+               create_time,
+               update_time
+        FROM t_oa_police_report
+        WHERE report_id = #{reportId} AND deleted_flag = #{deletedFlag}
+    </select>
+
+    <select id="queryByReporterPhone" resultType="net.lab1024.sa.admin.module.business.oa.police.domain.vo.PoliceReportVO">
+        SELECT * FROM t_oa_police_report
+        WHERE reporter_phone = #{reporterPhone}
+        AND deleted_flag = #{deletedFlag}
+        ORDER BY report_time DESC
+    </select>
+
+    <select id="queryByHandler" resultType="net.lab1024.sa.admin.module.business.oa.police.domain.vo.PoliceReportVO">
+        SELECT * FROM t_oa_police_report
+        WHERE handler_id = #{handlerId}
+        AND deleted_flag = #{deletedFlag}
+        ORDER BY report_time DESC
+    </select>
+
+    <select id="getStatusStatistics" resultType="net.lab1024.sa.admin.module.business.oa.police.domain.vo.PoliceReportVO">
+        SELECT status,
+               CASE status
+                   WHEN 1 THEN '待处理'
+                   WHEN 2 THEN '处理中'
+                   WHEN 3 THEN '已完成'
+                   WHEN 4 THEN '已关闭'
+                   ELSE '未知'
+               END AS status_name,
+               COUNT(*) AS count
+        FROM t_oa_police_report
+        WHERE deleted_flag = #{deletedFlag}
+        GROUP BY status
+        ORDER BY status
+    </select>
+
+    <select id="getMaxReportNumberByDate" resultType="string">
+        SELECT MAX(report_number)
+        FROM t_oa_police_report
+        WHERE report_number LIKE CONCAT(#{datePrefix}, '%')
+        AND deleted_flag = 0
+    </select>
+
+    <select id="getLocationSuggestions" resultType="string">
+        SELECT incident_location
+        FROM (
+            SELECT incident_location, MAX(create_time) as latest_time
+            FROM t_oa_police_report
+            WHERE incident_location IS NOT NULL
+            AND incident_location != ''
+            AND incident_location LIKE CONCAT('%', #{keyword}, '%')
+            AND deleted_flag = #{deletedFlag}
+            GROUP BY incident_location
+            ORDER BY latest_time DESC
+            LIMIT 10
+        ) AS unique_locations
+    </select>
+
+</mapper>

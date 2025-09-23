@@ -75,7 +75,7 @@ smartAxios.interceptors.response.use(
     }
 
     const res = response.data;
-    if (res.code && res.code !== 1) {
+    if (res.code && res.code !== 1 && res.code !== 0) {
       // `token` 过期或者账号已在别处登录
       if (res.code === 30007 || res.code === 30008) {
         message.destroy();

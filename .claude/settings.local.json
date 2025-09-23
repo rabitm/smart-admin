@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mvn:*)",
+      "Read(//d/apache-maven-3.9.6/conf/**)",
+      "Bash(findstr:*)",
+      "Bash(npm run dev:*)",
+      "Bash(find:*)",
+      "Bash(claude mcp add filesystem:*)",
+      "Bash(git add:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

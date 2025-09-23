@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="net.lab1024.sa.admin.module.business.oa.police.dao.PoliceReportFieldDataDao">
+
+    <!-- 批量插入字段数据 -->
+    <insert id="batchInsertFieldData" parameterType="java.util.List">
+        INSERT INTO t_police_report_field_data (report_id, field_key, field_value)
+        VALUES
+        <foreach collection="fieldDataList" item="item" separator=",">
+            (#{item.reportId}, #{item.fieldKey}, #{item.fieldValue})
+        </foreach>
+    </insert>
+
+    <!-- 根据警情ID删除所有字段数据 -->
+    <delete id="deleteByReportId">
+        DELETE FROM t_police_report_field_data WHERE report_id = #{reportId}
+    </delete>
+
+    <!-- 根据警情ID获取字段数据 -->
+    <select id="getFieldDataByReportId" resultType="net.lab1024.sa.admin.module.business.oa.police.domain.entity.PoliceReportFieldDataEntity">
+        SELECT
+            id,
+            report_id as reportId,
+            field_key as fieldKey,
+            field_value as fieldValue,
+            create_time as createTime,
+            update_time as updateTime
+        FROM t_police_report_field_data
+        WHERE report_id = #{reportId}
+        ORDER BY create_time ASC
+    </select>
+
+</mapper>
