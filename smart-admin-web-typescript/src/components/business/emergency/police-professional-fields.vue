@@ -40,7 +40,7 @@
               v-for="option in getFieldQuickOptions(subField)"
               :key="option"
               :class="['compact-btn', { 'selected': isOptionSelected(getFieldKey(subField), option) }]"
-              @click="!isFieldLockedByOther(getFieldKey(subField)) && (onFieldFocus(getFieldKey(subField)), selectOption(getFieldKey(subField), option))"
+              @click="handleButtonClick(getFieldKey(subField), () => selectOption(getFieldKey(subField), option), '快捷选项', option)"
               :disabled="disabled || isFieldLockedByOther(getFieldKey(subField))"
             >
               {{ option }}
@@ -54,7 +54,7 @@
                 v-for="item in getDictOptions(getFieldDictCode(subField))"
                 :key="item.dataValue"
                 :class="['compact-btn', { 'selected': modelValue[getFieldKey(subField)] === item.dataValue }]"
-                @click="!isFieldLockedByOther(getFieldKey(subField)) && (onFieldFocus(getFieldKey(subField)), updateField(getFieldKey(subField), item.dataValue))"
+                @click="handleButtonClick(getFieldKey(subField), () => updateField(getFieldKey(subField), item.dataValue), '字典单选', item.dataValue)"
                 :disabled="disabled || isFieldLockedByOther(getFieldKey(subField))"
                 :title="item.dataLabel"
               >
@@ -67,7 +67,7 @@
                 v-for="option in getFieldOptions(subField)"
                 :key="option"
                 :class="['compact-btn', { 'selected': modelValue[getFieldKey(subField)] === option }]"
-                @click="!isFieldLockedByOther(getFieldKey(subField)) && (onFieldFocus(getFieldKey(subField)), updateField(getFieldKey(subField), option))"
+                @click="handleButtonClick(getFieldKey(subField), () => updateField(getFieldKey(subField), option), '硬编码选项', option)"
                 :disabled="disabled || isFieldLockedByOther(getFieldKey(subField))"
               >
                 {{ option }}
@@ -101,7 +101,7 @@
           v-for="option in getFieldQuickOptions(field) || getFieldOptions(field)"
           :key="option"
           :class="['compact-checkbox-btn', { 'selected': isCheckboxSelected(getFieldKey(field), option) }]"
-          @click="(debugButtonClick('紧凑多选', getFieldKey(field), option), !isFieldLockedByOther(getFieldKey(field)) && (onFieldFocus(getFieldKey(field)), toggleCheckbox(getFieldKey(field), option)))"
+          @click="handleButtonClick(getFieldKey(field), () => toggleCheckbox(getFieldKey(field), option), '紧凑多选', option)"
           :disabled="disabled || isFieldLockedByOther(getFieldKey(field))"
         >
           <span class="check-icon">{{ isCheckboxSelected(getFieldKey(field), option) ? '✓' : '' }}</span>
@@ -119,7 +119,7 @@
           v-for="(option, idx) in getFieldQuickOptions(field)"
           :key="option"
           :class="['quick-btn', { 'selected': isOptionSelected(getFieldKey(field), option), 'debug-locked': isFieldLockedByOther(getFieldKey(field)) }]"
-          @click="(debugButtonClick('快捷选择', getFieldKey(field), option), !isFieldLockedByOther(getFieldKey(field)) && (onFieldFocus(getFieldKey(field)), selectOption(getFieldKey(field), option)))"
+          @click="handleButtonClick(getFieldKey(field), () => selectOption(getFieldKey(field), option), '快捷选择', option)"
           :disabled="disabled || isFieldLockedByOther(getFieldKey(field))"
           :title="`快捷键: ${idx + 1}`"
         >
@@ -140,7 +140,7 @@
             v-for="item in getDictOptions(getFieldDictCode(field))"
             :key="item.dataValue"
             :class="['select-btn', { 'selected': modelValue[getFieldKey(field)] === item.dataValue }]"
-            @click="(debugButtonClick('字典单选', getFieldKey(field), item.dataValue), !isFieldLockedByOther(getFieldKey(field)) && (onFieldFocus(getFieldKey(field)), updateField(getFieldKey(field), item.dataValue)))"
+            @click="handleButtonClick(getFieldKey(field), () => updateField(getFieldKey(field), item.dataValue), '字典单选', item.dataValue)"
             :disabled="disabled || isFieldLockedByOther(getFieldKey(field))"
             :title="item.dataLabel"
           >
@@ -153,7 +153,7 @@
             v-for="option in getFieldOptions(field)"
             :key="option"
             :class="['select-btn', { 'selected': modelValue[getFieldKey(field)] === option }]"
-            @click="(debugButtonClick('硬编码单选', getFieldKey(field), option), !isFieldLockedByOther(getFieldKey(field)) && (onFieldFocus(getFieldKey(field)), updateField(getFieldKey(field), option)))"
+            @click="handleButtonClick(getFieldKey(field), () => updateField(getFieldKey(field), option), '硬编码单选', option)"
             :disabled="disabled || isFieldLockedByOther(getFieldKey(field))"
           >
             {{ option }}
@@ -173,7 +173,7 @@
             v-for="item in getDictOptions(getFieldDictCode(field))"
             :key="item.dataValue"
             :class="['checkbox-btn', { 'selected': isDictCheckboxSelected(getFieldKey(field), item.dataValue) }]"
-            @click="(debugButtonClick('字典多选', getFieldKey(field), item.dataValue), !isFieldLockedByOther(getFieldKey(field)) && (onFieldFocus(getFieldKey(field)), toggleDictCheckbox(getFieldKey(field), item.dataValue)))"
+            @click="handleButtonClick(getFieldKey(field), () => toggleDictCheckbox(getFieldKey(field), item.dataValue), '字典多选', item.dataValue)"
             :disabled="disabled || isFieldLockedByOther(getFieldKey(field))"
             :title="item.dataLabel"
           >
@@ -187,7 +187,7 @@
             v-for="option in getFieldOptions(field)"
             :key="option"
             :class="['checkbox-btn', { 'selected': isCheckboxSelected(getFieldKey(field), option) }]"
-            @click="(debugButtonClick('硬编码多选', getFieldKey(field), option), !isFieldLockedByOther(getFieldKey(field)) && (onFieldFocus(getFieldKey(field)), toggleCheckbox(getFieldKey(field), option)))"
+            @click="handleButtonClick(getFieldKey(field), () => toggleCheckbox(getFieldKey(field), option), '硬编码多选', option)"
             :disabled="disabled || isFieldLockedByOther(getFieldKey(field))"
           >
             <span class="check-icon">{{ isCheckboxSelected(getFieldKey(field), option) ? '✓' : '' }}</span>
@@ -266,6 +266,7 @@
   import { useDictStore } from '/@/store/modules/system/dict';
   import CollaborationFieldIndicator from '/@/components/business/collaboration/CollaborationFieldIndicator.vue';
   import fieldCollaborationManager from '/@/utils/field-collaboration-manager';
+  import { simpleFieldLockManager } from '/@/utils/simple-field-lock-manager';
   import { useRoute } from 'vue-router';
   import { useUserStore } from '/@/store/modules/system/user';
   import { inject, onMounted, watch } from 'vue';
@@ -334,26 +335,10 @@
     return state;
   }
 
-  // 判断字段是否被其他用户锁定
+  // 判断字段是否被其他用户锁定 (使用新的SimpleFieldLockManager)
   function isFieldLockedByOther(fieldName: string): boolean {
-    const fieldState = getFieldState(fieldName);
-    if (!fieldState.isLocked || !fieldState.lockedBy) {
-      // 如果字段未锁定，先检查是否有缓存的锁定状态需要清理
-      if (process.env.NODE_ENV === 'development') {
-        const cacheKey = `${fieldName}_false`;
-        if (!lockLogCache || lockLogCache !== cacheKey) {
-          console.log('🔓 [Professional Field Unlock Check]', {
-            fieldName,
-            isLocked: fieldState.isLocked,
-            lockedBy: fieldState.lockedBy,
-            result: 'unlocked',
-            timestamp: Date.now()
-          });
-          lockLogCache = cacheKey;
-        }
-      }
-      return false;
-    }
+    const reportId = route.query.reportId?.toString() || '5';
+    const roomId = `police-report-${reportId}`;
 
     // 获取当前用户ID - 使用和emergency-intake.vue相同的逻辑
     let currentUserId = '';
@@ -365,21 +350,22 @@
       currentUserId = userStore.userInfo.employeeId.toString();
     }
 
-    // 关键修复：如果被锁定，但锁定用户是当前用户，则返回false（允许当前用户继续操作）
-    const isLockedByOther = fieldState.lockedBy.id !== currentUserId;
+    // 使用SimpleFieldLockManager检查是否被其他用户锁定
+    const isLockedByOther = simpleFieldLockManager.isFieldLockedByOther(roomId, fieldName, currentUserId);
 
     // 只在开发模式且锁定状态变化时输出日志，减少噪音
     if (process.env.NODE_ENV === 'development') {
       const cacheKey = `${fieldName}_${isLockedByOther}`;
       if (!lockLogCache || lockLogCache !== cacheKey) {
+        const lockInfo = simpleFieldLockManager.getFieldLock(roomId, fieldName);
         console.log('🔒 [Professional Field Lock Check]', {
           fieldName,
-          isLocked: fieldState.isLocked,
-          lockedBy: fieldState.lockedBy,
+          isLocked: lockInfo.isLocked,
+          lockedBy: lockInfo.lockedBy,
           currentUserId,
           isLockedByOther,
           message: isLockedByOther ? 'locked by other user' : 'locked by current user or unlocked',
-          fieldStateRef: fieldState,
+          lockInfo,
           timestamp: Date.now()
         });
         lockLogCache = cacheKey;
@@ -507,6 +493,113 @@
           console.warn('🔧 [Professional Fields] syncManager.syncFieldEditState 调用失败:', error);
         }
       }
+    }
+  }
+
+  // 统一的按钮点击处理函数 - 使用简化锁定机制
+  function handleButtonClick(fieldName: string, action: () => void, buttonType: string, value: any) {
+    const reportId = route.query.reportId?.toString() || '5';
+    const roomId = `police-report-${reportId}`;
+
+    // 获取用户信息
+    let userId = '';
+    let userName = '';
+
+    if (userStore.employeeId) {
+      userId = userStore.employeeId.toString();
+      userName = userStore.actualName || userStore.userInfo?.actualName || '当前用户';
+    } else if (userStore.userInfo?.userId) {
+      userId = userStore.userInfo.userId.toString();
+      userName = userStore.userInfo.actualName || '当前用户';
+    } else if (userStore.userInfo?.employeeId) {
+      userId = userStore.userInfo.employeeId.toString();
+      userName = userStore.userInfo.actualName || '当前用户';
+    } else {
+      // 从localStorage获取
+      try {
+        const storedUser = localStorage.getItem('userInfo') || localStorage.getItem('LOGIN_USER_DATA') || localStorage.getItem('user-token');
+        if (storedUser) {
+          const user = JSON.parse(storedUser);
+          userId = (user.userId || user.employeeId || user.id || '').toString();
+          userName = user.actualName || user.name || '当前用户';
+        }
+      } catch (e) {
+        console.warn('🔧 [Professional Fields] 无法从localStorage获取用户信息:', e);
+      }
+    }
+
+    if (!userId) {
+      console.warn('🔧 [Professional Fields] 用户ID为空，无法进行按钮操作');
+      return;
+    }
+
+    const collaborationUser = {
+      id: userId,
+      name: userName,
+      avatar: userStore.userInfo?.avatar,
+      color: generateUserColor(userId)
+    };
+
+    // 检查字段是否被其他用户锁定
+    if (simpleFieldLockManager.isFieldLockedByOther(roomId, fieldName, userId)) {
+      const lock = simpleFieldLockManager.getFieldLock(roomId, fieldName);
+      console.log(`🔒 [Professional Fields] 字段 ${fieldName} 已被 ${lock.lockedBy?.name} 锁定，无法操作`);
+      return;
+    }
+
+    // 释放该用户的其他锁定字段
+    const unlockedFields = simpleFieldLockManager.unlockUserFields(roomId, userId, fieldName);
+
+    // 通知WebSocket其他字段的释放
+    unlockedFields.forEach(unlockedField => {
+      if (syncManager) {
+        try {
+          syncManager.syncFieldEditState(parseInt(reportId), unlockedField, 'FIELD_UNLOCK');
+        } catch (error) {
+          console.warn('🔧 [Professional Fields] 字段释放WebSocket通知失败:', error);
+        }
+      }
+    });
+
+    // 尝试锁定当前字段
+    const lockSuccess = simpleFieldLockManager.lockField(roomId, fieldName, collaborationUser);
+
+    if (lockSuccess) {
+      console.log(`🔒 [Professional Fields] 成功锁定字段 ${fieldName} (${buttonType}:${value})`);
+
+      // 执行字段更新操作
+      try {
+        action();
+
+        // 通知WebSocket字段锁定和编辑
+        if (syncManager) {
+          try {
+            syncManager.syncFieldEditState(parseInt(reportId), fieldName, 'FIELD_LOCK');
+            syncManager.syncFieldEditState(parseInt(reportId), fieldName, 'FIELD_EDIT');
+          } catch (error) {
+            console.warn('🔧 [Professional Fields] WebSocket通知失败:', error);
+          }
+        }
+
+        // 设置自动释放定时器 (3秒后自动释放)
+        setTimeout(() => {
+          const released = simpleFieldLockManager.unlockField(roomId, fieldName, userId);
+          if (released && syncManager) {
+            try {
+              syncManager.syncFieldEditState(parseInt(reportId), fieldName, 'FIELD_UNLOCK');
+            } catch (error) {
+              console.warn('🔧 [Professional Fields] 自动释放WebSocket通知失败:', error);
+            }
+          }
+        }, 3000);
+
+      } catch (error) {
+        console.error('🔧 [Professional Fields] 字段更新操作失败:', error);
+        // 操作失败时释放锁定
+        simpleFieldLockManager.unlockField(roomId, fieldName, userId);
+      }
+    } else {
+      console.warn(`🔒 [Professional Fields] 无法锁定字段 ${fieldName}`);
     }
   }
 
@@ -825,6 +918,15 @@
       console.log('🏗️ [Professional Fields] 组件已挂载');
       console.log('🏗️ [Professional Fields] props.disabled:', props.disabled);
       console.log('🏗️ [Professional Fields] props.fields长度:', props.fields.length);
+    }
+
+    // 设置 SimpleFieldLockManager 的 WebSocket 同步回调
+    const reportId = route.query.reportId?.toString() || '5';
+    if (syncManager && syncManager.syncFieldEditState) {
+      simpleFieldLockManager.setSyncCallback(syncManager.syncFieldEditState, parseInt(reportId));
+      console.log(`🔗 [Professional Fields] 已设置 SimpleFieldLockManager WebSocket 同步回调，reportId: ${reportId}`);
+    } else {
+      console.warn('🔗 [Professional Fields] syncManager 不可用，无法设置同步回调');
     }
   });
 </script>

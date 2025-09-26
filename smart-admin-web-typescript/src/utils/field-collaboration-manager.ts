@@ -1,12 +1,20 @@
 /**
- * 字段协作管理器 - 处理字段级别的实时协作
+ * 优化版字段协作管理器 - 支持200人并发
+ * 处理字段级别的实时协作
+ *
+ * 性能优化:
+ * 1. 对象池复用
+ * 2. 消息限流
+ * 3. 内存清理机制
+ * 4. 智能状态管理
  *
  * @Author: Claude Code Assistant
- * @Date: 2025-09-25
+ * @Date: 2025-09-26
  * @Copyright 1024创新实验室
  */
 
-import { reactive } from 'vue';
+import { reactive, shallowReactive } from 'vue';
+import { throttle, debounce } from 'lodash-es';
 import globalCollaborationManager from './global-collaboration-manager';
 import { UnifiedWebSocketClient } from './unified-websocket-client';
 import { getWebSocketClient } from './websocket-manager';
@@ -28,8 +36,8 @@ interface FieldState {
 }
 
 class FieldCollaborationManager {
-  // 字段状态存储 - roomId -> fieldName -> FieldState
-  private fieldStates = reactive<Record<string, Record<string, FieldState>>>({});
+  // 使用 shallowReactive 减少深度响应式开销
+  private fieldStates = shallowReactive<Record<string, Record<string, FieldState>>>({});
 
   // 当前用户正在编辑的字段
   private currentEditingFields = new Set<string>();
@@ -40,28 +48,51 @@ class FieldCollaborationManager {
   // WebSocket连接
   private wsClient: UnifiedWebSocketClient | null = null;
 
+  // 对象池复用 FieldState 对象
+  private fieldStatePool: FieldState[] = [];
+  private readonly POOL_MAX_SIZE = 1000;
+
+  // 消息限流器 - 防止消息风暴
+  private messageThrottlers = new Map<string, Function>();
+
+  // 定时器管理 - 防止内存泄漏
+  private cleanupTimer: NodeJS.Timeout;
+
+  // 性能统计
+  private stats = {
+    messagesProcessed: 0,
+    messagesThrottled: 0,
+    memoryUsage: 0,
+    lastCleanup: Date.now()
+  };
+
+  constructor() {
+    this.initializeCleanupScheduler();
+    this.preAllocatePool();
+  }
+
   /**
-   * 获取字段状态
+   * 优化的字段状态获取 - 使用对象池
    */
   getFieldState(roomId: string, fieldName: string): FieldState {
+    // 懒加载房间状态
     if (!this.fieldStates[roomId]) {
       this.fieldStates[roomId] = {};
     }
 
+    // 从对象池获取或创建新状态
     if (!this.fieldStates[roomId][fieldName]) {
-      this.fieldStates[roomId][fieldName] = {
-        isLocked: false,
-        isEditing: false
-      };
+      this.fieldStates[roomId][fieldName] = this.getPooledFieldState();
     }
 
-    // 为调试添加状态访问日志
-    if (process.env.NODE_ENV === 'development' && Math.random() < 0.05) { // 5% 概率输出，减少日志噪音
+    // 为调试添加状态访问日志 (减少频率以提高性能)
+    if (process.env.NODE_ENV === 'development' && Math.random() < 0.01) { // 减少到1%概率
       console.log('🔍 [Field Collaboration] getFieldState:', {
         roomId,
         fieldName,
         state: this.fieldStates[roomId][fieldName],
-        stateRef: Object.keys(this.fieldStates[roomId])
+        poolSize: this.fieldStatePool.length,
+        memoryUsage: this.stats.memoryUsage
       });
     }
 
@@ -69,19 +100,37 @@ class FieldCollaborationManager {
   }
 
   /**
-   * 用户聚焦到字段
+   * 限流版字段聚焦处理 - 支持高频操作
    */
   onFieldFocus(roomId: string, fieldName: string, user: CollaborationUser) {
+    const throttleKey = `${roomId}:${fieldName}:focus`;
+
+    if (!this.messageThrottlers.has(throttleKey)) {
+      this.messageThrottlers.set(throttleKey,
+        throttle((roomId, fieldName, user) => {
+          this.performFieldFocus(roomId, fieldName, user);
+        }, 100) // 100ms 限流
+      );
+    }
+
+    this.messageThrottlers.get(throttleKey)!(roomId, fieldName, user);
+  }
+
+  private performFieldFocus(roomId: string, fieldName: string, user: CollaborationUser) {
     const fieldState = this.getFieldState(roomId, fieldName);
+
+    // 首先释放当前用户锁定的其他字段（解决单选/多选字段切换问题）
+    this.releaseUserLockedFields(roomId, user, fieldName);
 
     // 锁定字段
     fieldState.isLocked = true;
     fieldState.lockedBy = user;
+    fieldState.lastModifiedAt = Date.now();
 
     // 添加到当前编辑字段列表
     this.currentEditingFields.add(fieldName);
 
-    // 广播事件 - 使用统一WebSocket客户端广播，确保其他用户能看到锁定状态
+    // 广播事件 - 使用统一WebSocket客户端广播
     const wsClient = getWebSocketClient();
     if (wsClient && wsClient.isConnected) {
       const message = createBusinessMessage('police', 'FIELD_FOCUS', {
@@ -96,7 +145,7 @@ class FieldCollaborationManager {
       console.warn(`⚠️ [Field Collaboration] WebSocket未连接，无法广播字段聚焦: ${fieldName}`);
     }
 
-    // 发送活动事件 - 保留本地事件触发
+    // 发送活动事件
     globalCollaborationManager.emit('field_focus', {
       userId: user.id,
       fieldName,
@@ -104,7 +153,8 @@ class FieldCollaborationManager {
       timestamp: Date.now()
     });
 
-    console.log(`🎯 [Field Collaboration] 用户 ${user.name} 聚焦字段 ${fieldName}`);
+    this.stats.messagesProcessed++;
+    console.log(`🎯 [Field Collaboration] 用户 ${user.name} 聚焦字段 ${fieldName} (已处理: ${this.stats.messagesProcessed})`);
   }
 
   /**
@@ -528,6 +578,168 @@ class FieldCollaborationManager {
       this.autoUnlockTimers.delete(key);
       console.log(`🗑️ [Field Collaboration] 清除自动解锁定时器: ${fieldName}`);
     }
+  }
+
+  /**
+   * 释放用户锁定的其他字段（除了当前字段）
+   * 解决单选/多选字段切换时的自动释放问题
+   */
+  private releaseUserLockedFields(roomId: string, user: CollaborationUser, currentFieldName: string) {
+    const roomState = this.fieldStates[roomId];
+    if (!roomState) return;
+
+    const fieldsToRelease: string[] = [];
+
+    // 遍历所有字段，找到该用户锁定的其他字段
+    for (const [fieldName, fieldState] of Object.entries(roomState)) {
+      if (fieldName !== currentFieldName &&
+          fieldState.isLocked &&
+          fieldState.lockedBy?.id === user.id) {
+        fieldsToRelease.push(fieldName);
+      }
+    }
+
+    // 释放找到的字段
+    for (const fieldName of fieldsToRelease) {
+      const fieldState = roomState[fieldName];
+      fieldState.isLocked = false;
+      fieldState.lockedBy = undefined;
+
+      // 清除自动解锁定时器
+      this.clearAutoUnlockTimer(roomId, fieldName);
+
+      // 从当前编辑字段列表移除
+      this.currentEditingFields.delete(fieldName);
+
+      console.log(`🔓 [Field Collaboration] 自动释放用户锁定的字段: ${fieldName} (用户: ${user.name})`);
+
+      // 广播字段释放事件
+      const wsClient = getWebSocketClient();
+      if (wsClient && wsClient.isConnected) {
+        const message = createBusinessMessage('police', 'FIELD_BLUR', {
+          roomId,
+          fieldName,
+          user,
+          timestamp: Date.now(),
+          isAutoUnlock: true // 标记为自动解锁事件
+        });
+        wsClient.send(message);
+        console.log(`📡 [Field Collaboration] WebSocket广播字段自动释放: ${fieldName}`);
+      }
+    }
+  }
+
+  /**
+   * 对象池管理 - 性能优化
+   */
+  private getPooledFieldState(): FieldState {
+    if (this.fieldStatePool.length > 0) {
+      const state = this.fieldStatePool.pop()!;
+      // 重置状态
+      state.isLocked = false;
+      state.lockedBy = undefined;
+      state.lastModifiedBy = undefined;
+      state.lastModifiedAt = undefined;
+      state.isEditing = false;
+      return state;
+    }
+
+    return {
+      isLocked: false,
+      isEditing: false
+    };
+  }
+
+  private returnToPool(state: FieldState) {
+    if (this.fieldStatePool.length < this.POOL_MAX_SIZE) {
+      this.fieldStatePool.push(state);
+    }
+  }
+
+  private preAllocatePool() {
+    // 预分配50个对象到池中
+    for (let i = 0; i < 50; i++) {
+      this.fieldStatePool.push({
+        isLocked: false,
+        isEditing: false
+      });
+    }
+  }
+
+  /**
+   * 内存清理机制 - 支持200人并发
+   */
+  private initializeCleanupScheduler() {
+    // 每30秒执行一次清理
+    this.cleanupTimer = setInterval(() => {
+      this.performMemoryCleanup();
+    }, 30000);
+  }
+
+  private performMemoryCleanup() {
+    const now = Date.now();
+    const INACTIVE_THRESHOLD = 5 * 60 * 1000; // 5分钟
+
+    // 清理过期的字段状态
+    Object.keys(this.fieldStates).forEach(roomId => {
+      Object.keys(this.fieldStates[roomId]).forEach(fieldName => {
+        const state = this.fieldStates[roomId][fieldName];
+        if (state.lastModifiedAt && (now - state.lastModifiedAt) > INACTIVE_THRESHOLD) {
+          this.returnToPool(state);
+          delete this.fieldStates[roomId][fieldName];
+        }
+      });
+
+      // 清理空房间
+      if (Object.keys(this.fieldStates[roomId]).length === 0) {
+        delete this.fieldStates[roomId];
+      }
+    });
+
+    // 清理过期的限流器
+    this.messageThrottlers.clear();
+
+    // 更新统计
+    this.stats.lastCleanup = now;
+    this.stats.memoryUsage = this.calculateMemoryUsage();
+
+    console.log('🧹 [字段协作] 内存清理完成:', this.stats);
+  }
+
+  private calculateMemoryUsage(): number {
+    return Object.keys(this.fieldStates).reduce((total, roomId) => {
+      return total + Object.keys(this.fieldStates[roomId]).length;
+    }, 0);
+  }
+
+  /**
+   * 获取性能统计
+   */
+  getPerformanceStats() {
+    return { ...this.stats };
+  }
+
+  /**
+   * 销毁管理器 - 清理资源
+   */
+  destroy() {
+    // 清理所有定时器
+    this.autoUnlockTimers.forEach(timer => clearTimeout(timer));
+    this.autoUnlockTimers.clear();
+
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+    }
+
+    // 清理限流器
+    this.messageThrottlers.clear();
+
+    // 返回所有对象到池
+    Object.values(this.fieldStates).forEach(roomStates => {
+      Object.values(roomStates).forEach(state => this.returnToPool(state));
+    });
+
+    console.log('🗑️ [字段协作] 管理器已销毁');
   }
 }
 

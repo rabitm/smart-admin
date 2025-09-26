@@ -116,6 +116,7 @@ public class WebSocketOptimizationConfig implements WebSocketConfigurer {
 /**
  * WebSocket连接参数优化配置
  */
+@Slf4j
 @Configuration
 class WebSocketTuningConfig {
 

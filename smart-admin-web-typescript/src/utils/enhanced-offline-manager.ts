@@ -609,6 +609,85 @@ export class EnhancedOfflineManager {
   }
 
   /**
+   * 序列化操作对象以处理复杂数据类型
+   */
+  private serializeOperation(operation: EnhancedOfflineOperation): any {
+    try {
+      return {
+        ...operation,
+        data: JSON.stringify(operation.data),
+        metadata: JSON.stringify(operation.metadata || {}),
+        serialized: true
+      };
+    } catch (error) {
+      console.error('序列化操作失败:', error);
+      // 回退到原始对象，但清理问题数据
+      return {
+        ...operation,
+        data: this.sanitizeData(operation.data),
+        metadata: this.sanitizeData(operation.metadata || {}),
+        serialized: false
+      };
+    }
+  }
+
+  /**
+   * 反序列化操作对象
+   */
+  private deserializeOperation(operation: any): EnhancedOfflineOperation {
+    if (operation.serialized) {
+      try {
+        return {
+          ...operation,
+          data: JSON.parse(operation.data),
+          metadata: JSON.parse(operation.metadata),
+          serialized: undefined
+        };
+      } catch (error) {
+        console.error('反序列化操作失败:', error);
+        return operation;
+      }
+    }
+    return operation;
+  }
+
+  /**
+   * 清理数据中的不可序列化内容
+   */
+  private sanitizeData(data: any): any {
+    if (data === null || data === undefined) {
+      return data;
+    }
+
+    if (Array.isArray(data)) {
+      return data.map(item => this.sanitizeData(item));
+    }
+
+    if (typeof data === 'object') {
+      const sanitized: any = {};
+      for (const [key, value] of Object.entries(data)) {
+        try {
+          // 尝试序列化测试
+          JSON.stringify(value);
+          sanitized[key] = this.sanitizeData(value);
+        } catch {
+          // 如果无法序列化，转换为字符串或跳过
+          if (typeof value === 'function') {
+            continue; // 跳过函数
+          } else if (value instanceof Date) {
+            sanitized[key] = value.toISOString();
+          } else {
+            sanitized[key] = String(value);
+          }
+        }
+      }
+      return sanitized;
+    }
+
+    return data;
+  }
+
+  /**
    * 保存到IndexedDB
    */
   private async saveToIndexedDB(operation: EnhancedOfflineOperation): Promise<void> {
@@ -617,7 +696,10 @@ export class EnhancedOfflineManager {
     return new Promise((resolve, reject) => {
       const transaction = this.db!.transaction(['operations'], 'readwrite');
       const store = transaction.objectStore('operations');
-      const request = store.put(operation);
+
+      // 深度序列化操作对象以处理数组和复杂对象
+      const serializedOperation = this.serializeOperation(operation);
+      const request = store.put(serializedOperation);
 
       request.onerror = () => reject(request.error);
       request.onsuccess = () => resolve();
