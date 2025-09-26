@@ -1381,9 +1381,32 @@
     console.log('🛣️ [Route Debug] route.query 变化:', { newQuery, oldQuery });
   });
 
+  // 防止同步死循环的标志和强制重置机制
+  let isProcessingSync = false;
+  let syncResetTimer: NodeJS.Timeout | null = null;
+  const SYNC_RESET_TIMEOUT = 3000; // 3秒强制重置超时
+
+  // 防抖处理和操作ID跟踪，避免快速切换类型
+  let lastTypeChangeTime = 0;
+  const TYPE_CHANGE_DEBOUNCE_MS = 200; // 降低到200ms，提高响应性
+  let currentOperationId = 0; // 操作ID，确保操作的原子性
+  let activeOperations = new Set<number>(); // 跟踪活动的操作
+
+  // 智能数据备份机制，防止快速切换时数据丢失
+  let professionalFieldDataBackup: Record<string, any> = {};
+  let lastBackupHash = '';
+  let backupMemoryLimit = 50; // 限制备份字段数量，防止内存泄漏
+
   // 表单字段实时同步监听器
   watch(() => formData.reportType, (newValue, oldValue) => {
-    console.log('📝 [Field Watch Debug] reportType变化:', { newValue, oldValue, isEditMode: isEditMode.value });
+    console.log('📝 [Field Watch Debug] reportType变化:', { newValue, oldValue, isEditMode: isEditMode.value, isProcessingSync });
+
+    // 🔧 修复死循环：如果正在处理同步消息，跳过此次同步触发
+    if (isProcessingSync) {
+      console.log('⚠️ [Field Watch Debug] 正在处理同步消息，跳过reportType同步触发');
+      return;
+    }
+
     if (isEditMode.value && newValue !== null && newValue !== oldValue) {
       console.log('✅ [Field Watch Debug] 触发reportType同步');
 
@@ -1536,13 +1559,73 @@
     return hotkeys[index] || '';
   }
 
-  async function selectType(value: number, fromSync: boolean = false) {
-    console.log('🎯 [Select Type Debug] 灾害类型选择:', { oldValue: formData.reportType, newValue: value, fromSync });
-    console.log('🎯 [Select Type Debug] 编辑模式信息:', { isEditMode: isEditMode.value, editReportId: editReportId.value, hasExistingData: Object.keys(professionalFieldData).length > 0 });
+  async function selectType(value: number, fromSync: boolean = false, operationId?: number) {
+    // 生成操作ID，确保原子性
+    if (!fromSync && !operationId) {
+      currentOperationId++;
+      operationId = currentOperationId;
+    }
+
+    console.log('🎯 [Select Type Debug] 灾害类型选择:', {
+      oldValue: formData.reportType,
+      newValue: value,
+      fromSync,
+      operationId,
+      activeOperations: Array.from(activeOperations)
+    });
 
     const oldValue = formData.reportType;
-    formData.reportType = value;
-    currentReportType.value = value;
+    const currentTime = Date.now();
+
+    // 🔧 防抖：如果不是同步调用，检查是否过于频繁
+    if (!fromSync && (currentTime - lastTypeChangeTime) < TYPE_CHANGE_DEBOUNCE_MS) {
+      console.log('⚠️ [Select Type Debug] 类型切换过于频繁，跳过此次操作', { operationId });
+      return;
+    }
+
+    // 🔧 操作冲突检测：如果有相同的操作正在进行，跳过
+    if (operationId && activeOperations.has(operationId)) {
+      console.log('⚠️ [Select Type Debug] 操作冲突，跳过重复操作', { operationId });
+      return;
+    }
+
+    if (!fromSync && operationId) {
+      lastTypeChangeTime = currentTime;
+      activeOperations.add(operationId);
+      console.log('🔧 [Select Type Debug] 开始操作', { operationId, activeCount: activeOperations.size });
+    }
+
+    // 🛡️ 关键数据保护：在切换类型前智能备份专业字段数据
+    smartBackupProfessionalFieldData(`类型切换-${operationId || 'sync'}`);
+
+    // 操作完成后清理资源的函数
+    const cleanupOperation = () => {
+      if (operationId && activeOperations.has(operationId)) {
+        activeOperations.delete(operationId);
+        console.log('🧹 [Select Type Debug] 清理操作', { operationId, remainingCount: activeOperations.size });
+      }
+    };
+
+    // 🔧 修复死循环：在同步调用时使用安全设置标志，防止watch监听器触发同步
+    if (fromSync) {
+      setSyncState(true, `类型切换同步-${operationId || 'unknown'}`);
+    }
+
+    try {
+      formData.reportType = value;
+      currentReportType.value = value;
+    } finally {
+      // 确保在操作完成后重置标志和清理资源
+      if (fromSync) {
+        // 使用nextTick确保响应式更新完成后再重置
+        nextTick(() => {
+          setSyncState(false, `类型切换完成-${operationId || 'unknown'}`);
+        });
+      }
+
+      // 延迟清理操作，确保所有异步操作完成
+      setTimeout(cleanupOperation, 100);
+    }
 
     // 只有在非同步调用时才触发同步消息
     if (!fromSync && isEditMode.value && value !== oldValue && editReportId.value) {
@@ -1561,6 +1644,34 @@
 
     // 加载动态表单配置
     await loadFormConfig(value, fromSync);
+
+    // 🛡️ 关键数据保护：加载配置后，如果在编辑模式且有备份数据，检查数据完整性
+    if (isEditMode.value && Object.keys(professionalFieldDataBackup).length > 0) {
+      const currentDataCount = Object.keys(professionalFieldData).length;
+      const backupDataCount = Object.keys(professionalFieldDataBackup).length;
+
+      console.log('🛡️ [Data Protection] 检查数据完整性:', {
+        currentDataCount,
+        backupDataCount,
+        hasDataLoss: currentDataCount < backupDataCount
+      });
+
+      // 如果当前数据少于备份数据，说明可能发生了数据丢失，进行恢复
+      if (currentDataCount < backupDataCount) {
+        console.log('🚨 [Critical Data Recovery] 检测到数据丢失，正在恢复...');
+
+        // 恢复丢失的数据
+        Object.keys(professionalFieldDataBackup).forEach(key => {
+          if (!(key in professionalFieldData) && professionalFieldDataBackup[key] !== null && professionalFieldDataBackup[key] !== undefined) {
+            professionalFieldData[key] = professionalFieldDataBackup[key];
+            console.log(`🔄 [Data Recovery] 恢复字段 ${key}:`, professionalFieldDataBackup[key]);
+          }
+        });
+
+        console.log('✅ [Data Recovery] 数据恢复完成，恢复字段数量:', Object.keys(professionalFieldData).length);
+        message.success('已自动恢复专业字段数据');
+      }
+    }
   }
 
   function clearDynamicFields(fromSync: boolean = false, skipClearInEditMode: boolean = false) {
@@ -1568,6 +1679,13 @@
     console.log('🧹 [Clear Dynamic Fields] isEditMode:', isEditMode.value);
     console.log('🧹 [Clear Dynamic Fields] editReportId:', editReportId.value);
     console.log('🧹 [Clear Dynamic Fields] 当前专业字段:', Object.keys(professionalFieldData));
+
+    // 🔧 关键修复：在编辑模式下，永远不清空专业字段数据，避免数据丢失
+    if (isEditMode.value && editReportId.value && Object.keys(professionalFieldData).length > 0) {
+      console.log('🛡️ [Critical Data Protection] 编辑模式下保护专业数据，禁止清空避免数据丢失');
+      console.log('🛡️ [Critical Data Protection] 保护的字段数量:', Object.keys(professionalFieldData).length);
+      return;
+    }
 
     // 🔧 修复：在编辑模式加载时，如果已有专业数据且设置跳过清空标志，则不清空数据
     if (skipClearInEditMode && isEditMode.value && Object.keys(professionalFieldData).length > 0) {
@@ -1611,6 +1729,9 @@
     console.log('🚨 [Professional Field Debug] isEditMode:', isEditMode.value);
     console.log('🚨 [Professional Field Debug] editReportId:', editReportId.value);
 
+    // 🛡️ 在更新前先智能备份当前数据
+    smartBackupProfessionalFieldData('字段更新前');
+
     // 获取变更的字段
     const changes: Record<string, any> = {};
     const oldValues: Record<string, any> = {};
@@ -1635,6 +1756,12 @@
       delete professionalFieldData[key];
     });
     Object.assign(professionalFieldData, newValue);
+
+    // 🛡️ 更新后检查数据完整性并尝试恢复
+    const recovered = checkAndRecoverData('专业字段更新');
+    if (recovered) {
+      console.log('🔄 [Data Protection] 专业字段更新后检测到数据丢失并已恢复');
+    }
 
     // 如果在编辑模式且有变更，同步每个变更的字段
     if (isEditMode.value && editReportId.value && Object.keys(changes).length > 0) {
@@ -2041,6 +2168,157 @@
     }
 
     return colors[Math.abs(hash) % colors.length];
+  }
+
+  // 🛡️ 智能数据备份函数：只在数据真正变化时备份
+  function smartBackupProfessionalFieldData(context: string = 'unknown') {
+    if (!isEditMode.value || Object.keys(professionalFieldData).length === 0) {
+      return false;
+    }
+
+    // 计算当前数据的简单哈希
+    const currentHash = JSON.stringify(professionalFieldData);
+
+    // 只有数据真正变化时才备份
+    if (currentHash !== lastBackupHash) {
+      // 内存限制：如果备份数据过多，清理旧数据
+      if (Object.keys(professionalFieldDataBackup).length > backupMemoryLimit) {
+        console.log('🧹 [Smart Backup] 清理过多的备份数据，优化内存使用');
+        professionalFieldDataBackup = {};
+      }
+
+      professionalFieldDataBackup = { ...professionalFieldData };
+      lastBackupHash = currentHash;
+      console.log(`🛡️ [Smart Backup] 在 ${context} 中智能备份数据，字段数量: ${Object.keys(professionalFieldDataBackup).length}`);
+      return true;
+    }
+
+    console.log(`🛡️ [Smart Backup] 在 ${context} 中数据未变化，跳过备份`);
+    return false;
+  }
+
+  // 🛡️ 智能数据保护函数：检查并恢复数据（防止恢复触发同步）
+  function checkAndRecoverData(context: string = 'unknown', skipSync: boolean = true) {
+    if (!isEditMode.value || Object.keys(professionalFieldDataBackup).length === 0) {
+      return false;
+    }
+
+    const currentDataCount = Object.keys(professionalFieldData).length;
+    const backupDataCount = Object.keys(professionalFieldDataBackup).length;
+
+    // 更智能的丢失检测：不仅检查数量，还检查关键数据
+    const hasCriticalDataLoss = currentDataCount < backupDataCount ||
+      Object.keys(professionalFieldDataBackup).some(key => {
+        const backupValue = professionalFieldDataBackup[key];
+        const currentValue = professionalFieldData[key];
+
+        // 检查重要数据的丢失（非空值变成空值）
+        return backupValue !== null && backupValue !== undefined && backupValue !== ''
+               && (currentValue === null || currentValue === undefined || currentValue === '');
+      });
+
+    if (hasCriticalDataLoss) {
+      console.log(`🚨 [Critical Data Recovery] 在 ${context} 中检测到数据丢失，正在恢复...`);
+
+      // 🔧 防止恢复操作触发新的同步
+      const wasProcessingSync = isProcessingSync;
+      if (skipSync && !isProcessingSync) {
+        setSyncState(true, `数据恢复-${context}`);
+      }
+
+      let recoveredCount = 0;
+      const recoveredFields: string[] = [];
+
+      try {
+        Object.keys(professionalFieldDataBackup).forEach(key => {
+          const backupValue = professionalFieldDataBackup[key];
+          const currentValue = professionalFieldData[key];
+
+          // 只恢复真正丢失的重要数据
+          if (backupValue !== null && backupValue !== undefined && backupValue !== ''
+              && (currentValue === null || currentValue === undefined || currentValue === '')) {
+            professionalFieldData[key] = backupValue;
+            recoveredCount++;
+            recoveredFields.push(key);
+            console.log(`🔄 [Data Recovery] 恢复字段 ${key}:`, backupValue);
+          }
+        });
+
+        if (recoveredCount > 0) {
+          console.log(`✅ [Data Recovery] 在 ${context} 中恢复了 ${recoveredCount} 个字段:`, recoveredFields);
+
+          // 用户友好的提示，不要过于频繁
+          if (context !== '专业字段更新') { // 避免在正常更新时显示警告
+            message.success(`已自动恢复 ${recoveredCount} 个专业字段的数据`);
+          }
+
+          // 恢复后重新备份当前状态
+          smartBackupProfessionalFieldData(`恢复后备份-${context}`);
+
+          return true;
+        }
+      } finally {
+        // 确保重置同步状态
+        if (skipSync && !wasProcessingSync) {
+          nextTick(() => {
+            setSyncState(false, `数据恢复完成-${context}`);
+          });
+        }
+      }
+    }
+
+    return false;
+  }
+
+  // 🔧 强制重置同步状态，防止卡死
+  function forceResetSyncState(reason: string = 'timeout') {
+    if (isProcessingSync) {
+      console.log(`🚨 [Force Reset] 强制重置同步状态，原因: ${reason}`);
+      isProcessingSync = false;
+
+      // 清理强制重置定时器
+      if (syncResetTimer) {
+        clearTimeout(syncResetTimer);
+        syncResetTimer = null;
+      }
+
+      // 清理所有活动操作（紧急情况下）
+      if (activeOperations.size > 10) { // 如果操作过多，可能有问题
+        console.log('🚨 [Force Reset] 清理过多的活动操作，数量:', activeOperations.size);
+        activeOperations.clear();
+        currentOperationId = 0; // 重置操作ID
+      }
+    }
+  }
+
+  // 🔧 安全设置同步状态，带自动重置保护
+  function setSyncState(state: boolean, context: string = 'unknown') {
+    if (state) {
+      // 设置同步状态时，启动强制重置定时器
+      isProcessingSync = true;
+
+      // 清理之前的定时器
+      if (syncResetTimer) {
+        clearTimeout(syncResetTimer);
+      }
+
+      // 设置新的强制重置定时器
+      syncResetTimer = setTimeout(() => {
+        forceResetSyncState('安全超时');
+      }, SYNC_RESET_TIMEOUT);
+
+      console.log(`🔧 [Safe Sync] 设置同步状态为 true，上下文: ${context}，${SYNC_RESET_TIMEOUT}ms后自动重置`);
+    } else {
+      // 重置同步状态时，清理定时器
+      isProcessingSync = false;
+
+      if (syncResetTimer) {
+        clearTimeout(syncResetTimer);
+        syncResetTimer = null;
+      }
+
+      console.log(`🔧 [Safe Sync] 重置同步状态为 false，上下文: ${context}`);
+    }
   }
 
   // 统一协作事件处理器
@@ -2552,10 +2830,27 @@
 
     // 延迟300ms初始化操作记录管理器
     setTimeout(initRealOperationManager, 300);
+
+    // 🛡️ 初始智能备份：页面加载后进行首次备份
+    setTimeout(() => {
+      smartBackupProfessionalFieldData('页面初始化');
+    }, 1000);
+    console.log('🛡️ [Data Protection] 已启动智能数据备份机制');
   });
 
   onUnmounted(() => {
     document.removeEventListener('keydown', handleKeydown);
+
+    // 🛡️ 清理数据保护资源
+    professionalFieldDataBackup = {};
+    lastBackupHash = '';
+
+    // 🔧 强制清理同步状态和操作
+    forceResetSyncState('组件卸载');
+    activeOperations.clear();
+    currentOperationId = 0;
+
+    console.log('🛡️ [Data Protection] 已清理数据备份资源和同步状态');
 
     // 清理统一WebSocket协作系统
     if (policeWebSocketService.getCurrentReportId()) {
