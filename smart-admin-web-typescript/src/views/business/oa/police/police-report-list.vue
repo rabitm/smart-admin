@@ -413,23 +413,32 @@
   // 增强的表格数据（转换为高性能格式）
   const enhancedTableData = computed(() => {
     return tableData.value.map((item: any) => ({
-      id: item.reportId,
-      reportId: item.reportId,
-      reportNumber: item.reportNumber,
+      id: item.reportId || item.id, // 兼容两种ID字段
+      reportId: item.reportId || item.id,
+      reportNumber: item.reportNumber || '',
       reportType: item.reportType,
       reportLevel: item.reportLevel,
       status: item.status,
-      reporterName: item.reporterName,
-      reporterPhone: item.reporterPhone,
-      incidentLocation: item.incidentLocation,
-      description: item.description,
+      reporterName: item.reporterName || '',
+      reporterPhone: item.reporterPhone || '',
+      reporterIdCard: item.reporterIdCard || '',
+      incidentLocation: item.incidentLocation || '',
+      description: item.description || item.incidentDescription || '',
+      incidentDescription: item.description || item.incidentDescription || '',
       reportTime: item.reportTime,
-      handlerName: item.handlerName,
-      handleSeatCode: item.handleSeatCode,
-      createUserName: item.createUserName,
+      handlerName: item.handlerName || '',
+      handlerId: item.handlerId,
+      handleSeatCode: item.handleSeatCode || '',
+      handleResult: item.handleResult || '',
+      handleTime: item.handleTime,
+      attachments: item.attachments || '',
+      remark: item.remark || '',
+      createUserId: item.createUserId,
+      createUserName: item.createUserName || '',
       createTime: item.createTime,
-      updatedAt: Date.now(),
-      version: 1,
+      updateTime: item.updateTime,
+      updatedAt: item.updatedAt || Date.now(),
+      version: item.version || 1,
       updateFields: new Set<string>()
     }));
   });
@@ -575,24 +584,37 @@
 
   // 初始化高性能列表更新管理器
   const initializeListUpdateManager = () => {
-    // 设置WebSocket事件监听
-    policeListUpdateManager.on('list_update', (data: any) => {
-      console.log('📋 [高性能列表] 收到列表更新:', data);
+    // 监听数据刷新请求（降级模式）
+    policeListUpdateManager.on('data_refresh_required', () => {
+      console.log('🔄 [高性能列表] 收到数据刷新请求');
+      ajaxQuery();
+    });
 
-      // 处理实时更新
-      if (data.type === 'FIELD_UPDATE') {
-        handleHighPerformanceFieldUpdate(data);
-      } else if (data.type === 'RECORD_INSERT') {
-        handleHighPerformanceRecordInsert(data);
-      } else if (data.type === 'RECORD_DELETE') {
-        handleHighPerformanceRecordDelete(data);
-      }
+    // 监听实时更新事件
+    policeListUpdateManager.on('field_update', (data: any) => {
+      console.log('📝 [高性能列表] 收到字段更新:', data);
+      handleHighPerformanceFieldUpdate(data);
+    });
+
+    policeListUpdateManager.on('record_insert', (data: any) => {
+      console.log('➕ [高性能列表] 收到记录新增:', data);
+      handleHighPerformanceRecordInsert(data);
+    });
+
+    policeListUpdateManager.on('record_delete', (data: any) => {
+      console.log('🗑️ [高性能列表] 收到记录删除:', data);
+      handleHighPerformanceRecordDelete(data);
     });
 
     policeListUpdateManager.on('batch_update', (data: any) => {
       console.log('📦 [高性能列表] 收到批量更新:', data);
       handleHighPerformanceBatchUpdate(data);
     });
+
+    // 初始化数据到管理器
+    if (enhancedTableData.value.length > 0) {
+      policeListUpdateManager.initializeData(enhancedTableData.value);
+    }
 
     console.log('🚀 [高性能列表] 更新管理器初始化完成');
   };

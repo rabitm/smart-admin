@@ -23,19 +23,31 @@ import { createBusinessMessage } from '/@/types/websocket';
  * 警情数据接口
  */
 export interface PoliceReportData {
-  id: number;
+  id: number; // 前端统一使用 id
+  reportId: number; // 兼容后端的 reportId 字段
   reportNumber: string;
-  reportType: string;
-  reportLevel: string;
-  status: string;
+  reportType: number | string; // 兼容数值和字符串类型
+  reportLevel: number | string;
+  status: number | string;
   reporterName?: string;
   reporterPhone?: string;
+  reporterIdCard?: string;
   incidentLocation?: string;
+  description?: string; // 兼容后端的 description 字段
   incidentDescription?: string;
-  reportTime?: Date;
+  reportTime?: Date | string;
   handlerName?: string;
+  handlerId?: number;
   handleSeatCode?: string;
-  updatedAt: number;
+  handleResult?: string;
+  handleTime?: Date | string;
+  attachments?: string;
+  remark?: string;
+  createUserId?: number;
+  createUserName?: string;
+  createTime?: Date | string;
+  updateTime?: Date | string;
+  updatedAt: number; // 前端管理的更新时间戳
   version: number; // 版本号用于冲突检测
   updateFields?: Set<string>; // 更新的字段集合
 }
@@ -144,14 +156,37 @@ export class PoliceListUpdateManager {
   /**
    * 初始化WebSocket连接
    */
-  private initializeWebSocket() {
-    this.wsClient = getWebSocketClient();
+  private async initializeWebSocket() {
+    try {
+      this.wsClient = getWebSocketClient();
 
-    if (this.wsClient) {
-      // 订阅列表更新频道
-      this.wsClient.subscribe('police_list_updates', this.handleWebSocketMessage.bind(this));
-      console.log('[ListUpdateManager] WebSocket连接已建立');
+      if (this.wsClient && this.wsClient.isConnected) {
+        // 监听现有的警务模块消息，而不是创建新的订阅
+        this.wsClient.onModuleMessage?.('police', 'LIST_UPDATE', this.handleWebSocketMessage.bind(this));
+        this.wsClient.onModuleMessage?.('police', 'BATCH_UPDATE', this.handleBatchWebSocketMessage.bind(this));
+
+        console.log('🚀 [ListUpdateManager] 已集成到现有WebSocket系统');
+      } else {
+        console.warn('⚠️ [ListUpdateManager] WebSocket客户端未连接，使用降级模式');
+        this.initializePollingMode();
+      }
+    } catch (error) {
+      console.error('❌ [ListUpdateManager] WebSocket初始化失败:', error);
+      this.initializePollingMode();
     }
+  }
+
+  /**
+   * 初始化轮询模式（降级方案）
+   */
+  private initializePollingMode() {
+    console.log('🔄 [ListUpdateManager] 启动轮询模式作为降级方案');
+
+    // 每5秒轮询一次数据变化（降级方案）
+    setInterval(() => {
+      // 触发数据刷新事件
+      this.emitEvent('data_refresh_required');
+    }, 5000);
   }
 
   /**
@@ -160,10 +195,85 @@ export class PoliceListUpdateManager {
   private handleWebSocketMessage(message: any) {
     if (!message || !message.data) return;
 
-    const updateMessage = message.data as ListUpdateMessage;
+    try {
+      const updateMessage = message.data as ListUpdateMessage;
+      console.log('📨 [ListUpdateManager] 收到WebSocket消息:', updateMessage.type);
 
-    // 添加到更新队列
-    this.enqueueUpdate(updateMessage);
+      // 添加到更新队列
+      this.enqueueUpdate(updateMessage);
+    } catch (error) {
+      console.error('❌ [ListUpdateManager] 处理WebSocket消息失败:', error);
+    }
+  }
+
+  /**
+   * 处理批量WebSocket消息
+   */
+  private handleBatchWebSocketMessage(message: any) {
+    if (!message || !message.data || !message.data.updates) return;
+
+    try {
+      const batchMessage: ListUpdateMessage = {
+        type: 'BATCH',
+        batchData: message.data.updates,
+        timestamp: message.data.timestamp || Date.now(),
+        userId: message.data.userId || 'unknown',
+        userName: message.data.userName || '系统'
+      };
+
+      console.log('📦 [ListUpdateManager] 收到批量WebSocket消息:', batchMessage.batchData?.length, '个更新');
+
+      // 添加到更新队列
+      this.enqueueUpdate(batchMessage);
+    } catch (error) {
+      console.error('❌ [ListUpdateManager] 处理批量WebSocket消息失败:', error);
+    }
+  }
+
+  /**
+   * 事件发射器
+   */
+  private eventListeners = new Map<string, Function[]>();
+
+  private emitEvent(eventName: string, ...args: any[]) {
+    const listeners = this.eventListeners.get(eventName);
+    if (listeners) {
+      listeners.forEach(listener => {
+        try {
+          listener(...args);
+        } catch (error) {
+          console.error(`❌ [ListUpdateManager] 事件监听器执行失败 [${eventName}]:`, error);
+        }
+      });
+    }
+  }
+
+  /**
+   * 添加事件监听器
+   */
+  public on(eventName: string, listener: Function) {
+    if (!this.eventListeners.has(eventName)) {
+      this.eventListeners.set(eventName, []);
+    }
+    this.eventListeners.get(eventName)!.push(listener);
+  }
+
+  /**
+   * 移除事件监听器
+   */
+  public off(eventName: string, listener?: Function) {
+    if (!listener) {
+      this.eventListeners.delete(eventName);
+      return;
+    }
+
+    const listeners = this.eventListeners.get(eventName);
+    if (listeners) {
+      const index = listeners.indexOf(listener);
+      if (index !== -1) {
+        listeners.splice(index, 1);
+      }
+    }
   }
 
   /**

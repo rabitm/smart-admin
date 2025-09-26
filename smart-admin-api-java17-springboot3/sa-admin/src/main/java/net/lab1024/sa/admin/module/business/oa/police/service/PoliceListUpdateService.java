@@ -346,19 +346,31 @@ public class PoliceListUpdateService {
      */
     private Map<String, Object> convertToUpdateData(PoliceReportEntity report) {
         Map<String, Object> data = new HashMap<>();
-        data.put("id", report.getId());
+        data.put("id", report.getReportId()); // 前端期望的 id 字段
+        data.put("reportId", report.getReportId()); // 后端的主键字段
         data.put("reportNumber", report.getReportNumber());
         data.put("reportType", report.getReportType());
         data.put("reportLevel", report.getReportLevel());
         data.put("status", report.getStatus());
         data.put("reporterName", report.getReporterName());
         data.put("reporterPhone", report.getReporterPhone());
+        data.put("reporterIdCard", report.getReporterIdCard());
         data.put("incidentLocation", report.getIncidentLocation());
-        data.put("incidentDescription", report.getIncidentDescription());
+        data.put("description", report.getDescription()); // 后端字段名
+        data.put("incidentDescription", report.getDescription()); // 前端期望的字段名
         data.put("reportTime", report.getReportTime());
         data.put("handlerName", report.getHandlerName());
-        data.put("handleSeatCode", report.getHandleSeatCode());
-        data.put("updatedAt", System.currentTimeMillis());
+        data.put("handlerId", report.getHandlerId());
+        data.put("handleResult", report.getHandleResult());
+        data.put("handleTime", report.getHandleTime());
+        data.put("attachments", report.getAttachments());
+        data.put("remark", report.getRemark());
+        data.put("createUserId", report.getCreateUserId());
+        data.put("createUserName", report.getCreateUserName());
+        data.put("createTime", report.getCreateTime());
+        data.put("updateTime", report.getUpdateTime());
+        data.put("updatedAt", System.currentTimeMillis()); // 前端管理的时间戳
+        data.put("version", 1); // 版本控制
         return data;
     }
 
