@@ -247,7 +247,7 @@ public class PoliceListUpdateService {
     public void handleReportInsert(PoliceReportEntity report, String userId, String userName) {
         Map<String, Object> insertMessage = new HashMap<>();
         insertMessage.put("type", "INSERT");
-        insertMessage.put("reportId", report.getId());
+        insertMessage.put("reportId", report.getReportId());
         insertMessage.put("data", convertToUpdateData(report));
         insertMessage.put("timestamp", System.currentTimeMillis());
         insertMessage.put("userId", userId);
@@ -257,9 +257,9 @@ public class PoliceListUpdateService {
         broadcastListUpdate(insertMessage);
 
         // 更新Redis
-        updateRedisCache(report.getId(), convertToUpdateData(report));
+        updateRedisCache(report.getReportId(), convertToUpdateData(report));
 
-        log.info("新增警情已广播: reportId={}, user={}", report.getId(), userName);
+        log.info("新增警情已广播: reportId={}, user={}", report.getReportId(), userName);
     }
 
     /**
