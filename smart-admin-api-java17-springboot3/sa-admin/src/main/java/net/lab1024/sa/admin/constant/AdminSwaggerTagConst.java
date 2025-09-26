@@ -26,6 +26,12 @@ public class AdminSwaggerTagConst extends SwaggerTagConst {
 
         public static final String OA_NOTICE = "OA办公-通知公告";
 
+        public static final String OA_POLICE_REPORT = "OA办公-警情管理";
+
+        public static final String POLICE_COLLABORATION_HISTORY = "OA办公-协作历史记录";
+
+        public static final String OA_SEAT = "OA办公-席位管理";
+
     }
 
 

@@ -48,6 +48,10 @@
         <a-input style="width: 120px" v-model:value="queryForm.handlerName" placeholder="请输入处理人员" />
       </a-form-item>
 
+      <a-form-item label="处理席位" class="smart-query-form-item">
+        <a-input style="width: 120px" v-model:value="queryForm.handleSeatCode" placeholder="请输入席位编码" />
+      </a-form-item>
+
       <a-form-item label="事发地点" class="smart-query-form-item">
         <a-input style="width: 200px" v-model:value="queryForm.incidentLocation" placeholder="请输入事发地点" />
       </a-form-item>
@@ -114,6 +118,13 @@
             {{ record.reportNumber }}
           </a-button>
         </template>
+
+        <template v-if="column.dataIndex === 'handleSeatCode'">
+          <a-tag v-if="record.handleSeatCode" color="blue">
+            {{ record.handleSeatCode }}
+          </a-tag>
+          <span v-else class="text-gray">-</span>
+        </template>
         <template v-if="column.dataIndex === 'reportType'">
           <span>{{ $smartEnumPlugin.getDescByValue('POLICE_REPORT_TYPE_ENUM', text) }}</span>
         </template>
@@ -159,7 +170,7 @@
 </template>
 
 <script setup lang="ts">
-  import { reactive, ref, onMounted } from 'vue';
+  import { reactive, ref, onMounted, onUnmounted } from 'vue';
   import { message, Modal } from 'ant-design-vue';
   import { SmartLoading } from '/@/components/framework/smart-loading';
   import { policeReportApi } from '/@/api/business/oa/police-report-api';
@@ -175,6 +186,7 @@
     POLICE_REPORT_LEVEL_ENUM,
     POLICE_REPORT_STATUS_ENUM
   } from '/@/constants/business/oa/police-report-const';
+  import { getWebSocketClient } from '/@/utils/websocket-manager';
 
   // --------------------------- 警情录入表格 列 ---------------------------
 
@@ -209,6 +221,16 @@
       title: '报警时间',
       dataIndex: 'reportTime',
       width: 150,
+    },
+    {
+      title: '处理席位',
+      dataIndex: 'handleSeatCode',
+      width: 100,
+    },
+    {
+      title: '处理人员',
+      dataIndex: 'handlerName',
+      width: 100,
     },
     {
       title: '事发地点',
@@ -260,6 +282,7 @@
     reporterName: '',
     reporterPhone: '',
     handlerName: '',
+    handleSeatCode: '',
     incidentLocation: '',
     reportTimeStart: null,
     reportTimeEnd: null,
@@ -382,7 +405,148 @@
     return colorMap[level] || 'default';
   }
 
-  onMounted(ajaxQuery);
+  // --------------------------- WebSocket实时同步 ---------------------------
+
+  let wsClient: any = null;
+
+  // 处理警情更新消息
+  function handlePoliceCaseUpdate(message: SeatSyncMessage) {
+    if (message.type === 'POLICE_CASE_UPDATE' && message.data) {
+      console.log('收到警情更新消息:', message);
+
+      // 查找列表中的对应项并更新
+      const reportList = tableData.value;
+      const index = reportList.findIndex((item: any) => item.reportId === message.policeCaseId);
+
+      if (index >= 0) {
+        // 更新列表中的数据
+        Object.assign(reportList[index], message.data);
+        console.log('已更新列表中的警情数据:', reportList[index]);
+
+        // 显示更新提示
+        const reportNumber = reportList[index].reportNumber || `#${message.policeCaseId}`;
+        message.success(`警情「${reportNumber}」已被其他用户更新`);
+
+        // 添加更新高亮效果
+        highlightTableRow(message.policeCaseId);
+      } else {
+        // 如果是新增的警情，重新加载列表
+        console.log('收到新增警情，刷新列表');
+        ajaxQuery();
+        message.info('列表已更新，有新的警情记录');
+      }
+    }
+  }
+
+  // 处理字段实时同步消息
+  function handleFieldSync(message: SeatSyncMessage) {
+    if (message.type === 'POLICE_CASE_FIELD_SYNC' && message.data) {
+      console.log('收到字段同步消息:', message);
+
+      const { fieldName, fieldValue } = message.data;
+      const reportList = tableData.value;
+      const index = reportList.findIndex((item: any) => item.reportId === message.policeCaseId);
+
+      if (index >= 0) {
+        // 更新对应字段
+        reportList[index][fieldName] = fieldValue;
+
+        // 字段显示名称映射
+        const fieldDisplayNames = {
+          reportType: '警情类型',
+          reportLevel: '紧急程度',
+          reporterName: '报警人姓名',
+          reporterPhone: '报警人电话',
+          incidentLocation: '事发地点',
+          description: '事件描述',
+          status: '处理状态',
+          handlerName: '处理人',
+          handleResult: '处理结果',
+          remark: '备注'
+        };
+
+        const displayName = fieldDisplayNames[fieldName] || fieldName;
+        const reportNumber = reportList[index].reportNumber || `#${message.policeCaseId}`;
+
+        // 显示实时编辑提示
+        message.info(`「${reportNumber}」的${displayName}正在被其他用户编辑`, 2);
+
+        // 添加列表行闪烁效果
+        highlightTableRow(message.policeCaseId);
+      }
+    }
+  }
+
+  // 高亮表格行
+  function highlightTableRow(reportId: number) {
+    // 添加高亮效果
+    const tableRow = document.querySelector(`[data-row-key="${reportId}"]`);
+    if (tableRow) {
+      tableRow.classList.add('realtime-update-row');
+      setTimeout(() => {
+        tableRow.classList.remove('realtime-update-row');
+      }, 3000);
+    }
+  }
+
+  // 处理列表刷新消息
+  function handleListRefresh(message: SeatSyncMessage) {
+    if (message.type === 'POLICE_LIST_REFRESH') {
+      console.log('收到列表刷新消息:', message);
+
+      // 重新加载列表数据
+      ajaxQuery();
+
+      // 显示操作提示
+      if (message.message) {
+        message.info(message.message);
+      }
+    }
+  }
+
+  // 处理警情锁定消息
+  function handlePoliceCaseLock(message: SeatSyncMessage) {
+    if (message.type === 'POLICE_CASE_LOCK') {
+      console.log('收到警情锁定消息:', message);
+      message.info(`警情正在被 ${message.message} 编辑中`);
+    }
+  }
+
+  // 处理警情解锁消息
+  function handlePoliceCaseUnlock(message: SeatSyncMessage) {
+    if (message.type === 'POLICE_CASE_UNLOCK') {
+      console.log('收到警情解锁消息:', message);
+    }
+  }
+
+  onMounted(() => {
+    ajaxQuery();
+
+    // 初始化WebSocket监听
+    try {
+      wsClient = getWebSocketClient();
+      wsClient.on('POLICE_CASE_UPDATE', handlePoliceCaseUpdate);
+      wsClient.on('POLICE_CASE_FIELD_SYNC', handleFieldSync);
+      wsClient.on('POLICE_LIST_REFRESH', handleListRefresh);
+      wsClient.on('POLICE_CASE_LOCK', handlePoliceCaseLock);
+      wsClient.on('POLICE_CASE_UNLOCK', handlePoliceCaseUnlock);
+      console.log('警情列表页面WebSocket监听已启动');
+    } catch (error) {
+      console.error('启动WebSocket监听失败:', error);
+    }
+  });
+
+  onUnmounted(() => {
+    // 清理WebSocket监听
+    if (wsClient) {
+      wsClient.off('POLICE_CASE_UPDATE', handlePoliceCaseUpdate);
+      wsClient.off('POLICE_CASE_FIELD_SYNC', handleFieldSync);
+      wsClient.off('POLICE_LIST_REFRESH', handleListRefresh);
+      wsClient.off('POLICE_CASE_LOCK', handlePoliceCaseLock);
+      wsClient.off('POLICE_CASE_UNLOCK', handlePoliceCaseUnlock);
+      console.log('警情列表页面WebSocket监听已清理');
+    }
+  });
 </script>
 
 <style scoped>
@@ -392,5 +556,129 @@
   white-space: nowrap;
   max-width: 200px;
   display: inline-block;
+}
+
+/* 实时更新表格行高亮效果 */
+:deep(.realtime-update-row) {
+  background: linear-gradient(90deg, rgba(24, 144, 255, 0.1), rgba(24, 144, 255, 0.05), rgba(24, 144, 255, 0.1));
+  background-size: 200% 100%;
+  animation: realtimeRowHighlight 2s ease-in-out;
+  position: relative;
+}
+
+:deep(.realtime-update-row::before) {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: linear-gradient(to bottom, #1890ff, #40a9ff);
+  border-radius: 0 2px 2px 0;
+}
+
+:deep(.realtime-update-row td) {
+  position: relative;
+  z-index: 1;
+}
+
+@keyframes realtimeRowHighlight {
+  0% {
+    background-position: -100% 0;
+    box-shadow: 0 0 0 rgba(24, 144, 255, 0.3);
+  }
+  50% {
+    background-position: 100% 0;
+    box-shadow: 0 2px 8px rgba(24, 144, 255, 0.3);
+  }
+  100% {
+    background-position: 200% 0;
+    box-shadow: 0 0 0 rgba(24, 144, 255, 0.3);
+  }
+}
+
+/* 新增记录高亮效果 */
+:deep(.new-record-row) {
+  background: linear-gradient(90deg, rgba(82, 196, 26, 0.15), rgba(82, 196, 26, 0.08), rgba(82, 196, 26, 0.15));
+  animation: newRecordPulse 3s ease-in-out;
+}
+
+:deep(.new-record-row::before) {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: linear-gradient(to bottom, #52c41a, #73d13d);
+  border-radius: 0 2px 2px 0;
+}
+
+@keyframes newRecordPulse {
+  0%, 100% {
+    background-color: rgba(82, 196, 26, 0.05);
+  }
+  50% {
+    background-color: rgba(82, 196, 26, 0.15);
+  }
+}
+
+/* 表格行状态指示器 */
+:deep(.ant-table-tbody > tr.editing-indicator) {
+  border-left: 3px solid #faad14;
+  background: rgba(250, 173, 20, 0.05);
+}
+
+:deep(.ant-table-tbody > tr.locked-indicator) {
+  border-left: 3px solid #ff4d4f;
+  background: rgba(255, 77, 79, 0.05);
+}
+
+/* 优化表格整体样式 */
+:deep(.ant-table) {
+  font-size: 13px;
+}
+
+:deep(.ant-table-thead > tr > th) {
+  background: #fafafa;
+  font-weight: 600;
+  color: #262626;
+  border-bottom: 2px solid #f0f0f0;
+}
+
+:deep(.ant-table-tbody > tr:hover > td) {
+  background-color: #e6f7ff;
+}
+
+/* 状态标签样式 */
+.status-tag {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.level-tag {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+/* 紧急等级特殊样式 */
+:deep(.ant-tag.urgent-level) {
+  background: linear-gradient(45deg, #ff4d4f, #ff7875);
+  color: white;
+  border: none;
+  animation: urgentPulse 2s infinite;
+}
+
+@keyframes urgentPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(255, 77, 79, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(255, 77, 79, 0.1);
+  }
 }
 </style>

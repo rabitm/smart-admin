@@ -12,6 +12,7 @@ import net.lab1024.sa.admin.module.business.oa.police.domain.form.PoliceReportQu
 import net.lab1024.sa.admin.module.business.oa.police.domain.form.PoliceReportUpdateForm;
 import net.lab1024.sa.admin.module.business.oa.police.domain.vo.PoliceReportVO;
 import net.lab1024.sa.admin.module.business.oa.police.service.PoliceReportService;
+import net.lab1024.sa.admin.module.business.oa.police.service.PoliceEditLockService;
 import net.lab1024.sa.base.common.domain.PageResult;
 import net.lab1024.sa.base.common.domain.RequestUser;
 import net.lab1024.sa.base.common.domain.ResponseDTO;
@@ -33,6 +34,9 @@ public class PoliceReportController {
 
     @Resource
     private PoliceReportService policeReportService;
+
+    @Resource
+    private PoliceEditLockService policeEditLockService;
 
     @Operation(summary = "分页查询警情信息")
     @PostMapping("/oa/police/report/page/query")
@@ -119,6 +123,39 @@ public class PoliceReportController {
     @SaCheckPermission("oa:police:query")
     public ResponseDTO<Map<String, Object>> getPoliceReportFieldData(@PathVariable Long reportId) {
         return policeReportService.getPoliceReportFieldData(reportId);
+    }
+
+    // ========== 警情编辑锁相关接口 ==========
+
+    @Operation(summary = "锁定警情（获取编辑权限）")
+    @PostMapping("/oa/police/report/lock/{reportId}")
+    @SaCheckPermission("oa:police:update")
+    public ResponseDTO<String> lockPoliceCase(@PathVariable Long reportId, @RequestParam(required = false) Long seatId) {
+        return policeEditLockService.lockPoliceCase(reportId, seatId);
+    }
+
+    @Operation(summary = "解锁警情（释放编辑权限）")
+    @PostMapping("/oa/police/report/unlock/{reportId}")
+    @SaCheckPermission("oa:police:update")
+    public ResponseDTO<String> unlockPoliceCase(@PathVariable Long reportId) {
+        return policeEditLockService.unlockPoliceCase(reportId);
+    }
+
+    @Operation(summary = "检查警情是否被锁定")
+    @GetMapping("/oa/police/report/check-lock/{reportId}")
+    @SaCheckPermission("oa:police:query")
+    public ResponseDTO<Boolean> checkPoliceCaseLock(@PathVariable Long reportId) {
+        return policeEditLockService.checkPoliceCaseLock(reportId);
+    }
+
+    @Operation(summary = "同步警情字段更新")
+    @PostMapping("/oa/police/report/sync-field/{reportId}")
+    @SaCheckPermission("oa:police:update")
+    public ResponseDTO<String> syncFieldUpdate(
+            @PathVariable Long reportId,
+            @RequestParam String fieldName,
+            @RequestParam(required = false) String fieldValue) {
+        return policeReportService.syncFieldUpdate(reportId, fieldName, fieldValue);
     }
 
 }

@@ -113,6 +113,46 @@ export const oaRouters: Array<RouteRecordRaw> = [
           },
         ],
       },
+      // 席位管理
+      {
+        path: '/oa/seat',
+        name: '_oa_seat',
+        meta: {
+          title: '席位管理',
+          menuType: MENU_TYPE_ENUM.CATALOG.value,
+          icon: 'DesktopOutlined',
+          parentMenuList: [{ name: '_oa', title: 'OA办公' }],
+        },
+        children: [
+          {
+            path: '/oa/seat/seat-list',
+            name: 'SeatList',
+            component: () => import('/@/views/business/oa/seat/seat-list.vue'),
+            meta: {
+              title: '席位列表',
+              menuType: MENU_TYPE_ENUM.MENU.value,
+              icon: 'TableOutlined',
+              parentMenuList: [
+                { name: '_oa', title: 'OA办公' },
+                { name: '_oa_seat', title: '席位管理' }
+              ],
+            },
+          },
+          {
+            path: '/oa/seat/detail',
+            name: 'SeatDetail',
+            component: () => import('/@/views/business/oa/seat/seat-detail.vue'),
+            meta: {
+              title: '席位详情',
+              hideInMenu: true,
+              parentMenuList: [
+                { name: '_oa', title: 'OA办公' },
+                { name: '_oa_seat', title: '席位管理' }
+              ],
+            },
+          },
+        ],
+      },
       // 企业管理
       {
         path: '/oa/enterprise',

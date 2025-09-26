@@ -62,4 +62,30 @@ export const policeReportApi = {
   getPoliceReportFieldData: (reportId) => {
     return getRequest(`/oa/police/report/field-data/${reportId}`);
   },
+
+  // 锁定警情（获取编辑权限）@author Claude Code Assistant
+  lock: (reportId, seatId) => {
+    const params = seatId ? `?seatId=${seatId}` : '';
+    return postRequest(`/oa/police/report/lock/${reportId}${params}`, {});
+  },
+
+  // 解锁警情（释放编辑权限）@author Claude Code Assistant
+  unlock: (reportId) => {
+    return postRequest(`/oa/police/report/unlock/${reportId}`, {});
+  },
+
+  // 检查警情是否被锁定 @author Claude Code Assistant
+  checkLock: (reportId) => {
+    return getRequest(`/oa/police/report/check-lock/${reportId}`);
+  },
+
+  // 同步字段更新 @author Claude Code Assistant
+  syncFieldUpdate: (reportId, fieldName, fieldValue) => {
+    const params = new URLSearchParams();
+    params.append('fieldName', fieldName);
+    if (fieldValue != null) {
+      params.append('fieldValue', String(fieldValue));
+    }
+    return postRequest(`/oa/police/report/sync-field/${reportId}?${params}`);
+  },
 };

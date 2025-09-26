@@ -148,6 +148,18 @@ export const useUserStore = defineStore({
         smartSentry.captureError(err);
       }
     },
+
+    // 初始化WebSocket连接
+    async initWebSocketConnection() {
+      try {
+        const { reconnectWebSocketAfterLogin } = await import('/@/utils/websocket-manager');
+        await reconnectWebSocketAfterLogin();
+        console.log('WebSocket连接已建立');
+      } catch (error) {
+        console.error('WebSocket连接初始化失败:', error);
+      }
+    },
+
     //设置登录信息
     setUserLoginInfo(data) {
       // 用户基本信息
@@ -182,6 +194,9 @@ export const useUserStore = defineStore({
       this.queryUnreadMessageCount();
       // 获取待办工作数
       this.queryToBeDoneList();
+
+      // 用户登录成功后，重新连接WebSocket
+      this.initWebSocketConnection();
     },
 
     setToken(token) {

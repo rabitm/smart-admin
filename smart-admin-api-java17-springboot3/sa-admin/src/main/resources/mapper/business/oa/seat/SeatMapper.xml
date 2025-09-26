@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="net.lab1024.sa.admin.module.business.oa.seat.dao.SeatDao">
+
+    <select id="queryPage" resultType="net.lab1024.sa.admin.module.business.oa.seat.domain.vo.SeatVO">
+        SELECT
+        s.seat_id,
+        s.seat_code,
+        s.seat_name,
+        s.seat_type,
+        s.position_x,
+        s.position_y,
+        s.floor_number,
+        s.area,
+        s.ip_address,
+        s.mac_address,
+        s.seat_status,
+        s.enabled_flag,
+        s.remark,
+        s.deleted_flag,
+        s.create_user_id,
+        s.create_user_name,
+        s.create_time,
+        s.update_time
+        FROM t_oa_seat s
+        WHERE s.deleted_flag = 0
+        <if test="query.seatCode != null and query.seatCode != ''">
+            AND s.seat_code LIKE CONCAT('%', #{query.seatCode}, '%')
+        </if>
+        <if test="query.seatName != null and query.seatName != ''">
+            AND s.seat_name LIKE CONCAT('%', #{query.seatName}, '%')
+        </if>
+        <if test="query.seatType != null">
+            AND s.seat_type = #{query.seatType}
+        </if>
+        <if test="query.seatStatus != null">
+            AND s.seat_status = #{query.seatStatus}
+        </if>
+        <if test="query.area != null and query.area != ''">
+            AND s.area = #{query.area}
+        </if>
+        <if test="query.floorNumber != null">
+            AND s.floor_number = #{query.floorNumber}
+        </if>
+        ORDER BY s.seat_code ASC, s.create_time DESC
+    </select>
+
+    <select id="selectBySeatCode" resultType="net.lab1024.sa.admin.module.business.oa.seat.domain.entity.SeatEntity">
+        SELECT * FROM t_oa_seat
+        WHERE seat_code = #{seatCode} AND deleted_flag = 0
+    </select>
+
+    <select id="selectByArea" resultType="net.lab1024.sa.admin.module.business.oa.seat.domain.vo.SeatVO">
+        SELECT
+        s.seat_id,
+        s.seat_code,
+        s.seat_name,
+        s.seat_type,
+        s.position_x,
+        s.position_y,
+        s.floor_number,
+        s.area,
+        s.ip_address,
+        s.mac_address,
+        s.seat_status,
+        s.enabled_flag,
+        s.remark,
+        s.create_time,
+        s.update_time
+        FROM t_oa_seat s
+        WHERE s.area = #{area} AND s.deleted_flag = 0
+        ORDER BY s.seat_code ASC
+    </select>
+
+    <select id="selectByFloorNumber" resultType="net.lab1024.sa.admin.module.business.oa.seat.domain.vo.SeatVO">
+        SELECT
+        s.seat_id,
+        s.seat_code,
+        s.seat_name,
+        s.seat_type,
+        s.position_x,
+        s.position_y,
+        s.floor_number,
+        s.area,
+        s.ip_address,
+        s.mac_address,
+        s.seat_status,
+        s.enabled_flag,
+        s.remark,
+        s.create_time,
+        s.update_time
+        FROM t_oa_seat s
+        WHERE s.floor_number = #{floorNumber} AND s.deleted_flag = 0
+        ORDER BY s.seat_code ASC
+    </select>
+
+    <select id="selectByIpAddress" resultType="net.lab1024.sa.admin.module.business.oa.seat.domain.entity.SeatEntity">
+        SELECT * FROM t_oa_seat
+        WHERE ip_address = #{ipAddress} AND deleted_flag = 0
+    </select>
+
+    <update id="updateSeatStatus">
+        UPDATE t_oa_seat
+        SET seat_status = #{status}, update_time = NOW()
+        WHERE seat_id = #{seatId}
+    </update>
+
+    <update id="batchUpdateSeatStatus">
+        UPDATE t_oa_seat
+        SET seat_status = #{status}, update_time = NOW()
+        WHERE seat_id IN
+        <foreach collection="seatIds" item="seatId" open="(" separator="," close=")">
+            #{seatId}
+        </foreach>
+    </update>
+
+</mapper>

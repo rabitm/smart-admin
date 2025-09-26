@@ -7,6 +7,18 @@
 -->
 <template>
   <div class="modern-police-edit">
+    <!-- 编辑锁状态 -->
+    <PoliceEditLock
+      v-if="isEdit && reportId"
+      :reportId="reportId"
+      :seatId="currentSeatId"
+      :autoLock="true"
+      @lockStatusChange="handleLockStatusChange"
+      @editAccessGranted="handleEditAccessGranted"
+      @editAccessDenied="handleEditAccessDenied"
+      ref="editLockRef"
+    />
+
     <!-- 顶部状态栏 -->
     <div class="top-status-bar">
       <div class="status-left">
@@ -31,7 +43,7 @@
             <ClockCircleOutlined />
             <span>{{ lastSaveTime }} 自动保存</span>
           </div>
-          <a-button size="large" @click="submitForm" type="primary" :loading="saving" class="submit-btn">
+          <a-button size="large" @click="submitForm" type="primary" :loading="saving" :disabled="isLocked" class="submit-btn">
             <CheckOutlined />
             {{ isEdit ? '保存更改' : '创建警情' }}
           </a-button>
@@ -45,11 +57,11 @@
         <!-- 左侧主要信息 - 扩大比例 -->
         <a-col :span="18">
           <div class="main-form-panel">
-            <a-form ref="formRef" :model="form" layout="inline" class="compact-form">
+            <a-form ref="formRef" :model="form" layout="inline" class="compact-form" :disabled="isLocked">
               <!-- 第一行：核心信息紧凑排列 -->
               <div class="inline-row primary-row">
                 <a-form-item name="reportType" label="类型" :rules="[{required: true, message: '请选择警情类型'}]" class="type-field">
-                  <div class="compact-type-selector">
+                  <div class="compact-type-selector" data-field="reportType">
                     <a-select v-model:value="form.reportType" size="small" style="width: 100px">
                       <a-select-option v-for="type in POLICE_REPORT_TYPE_ENUM" :key="type.value" :value="type.value">
                         {{ getTypeIcon(type.value) }} {{ type.desc }}
@@ -59,7 +71,7 @@
                 </a-form-item>
 
                 <a-form-item name="reportLevel" label="等级" :rules="[{required: true, message: '请选择紧急程度'}]" class="level-field">
-                  <div class="compact-level-buttons">
+                  <div class="compact-level-buttons" data-field="reportLevel">
                     <div
                       v-for="level in POLICE_REPORT_LEVEL_ENUM"
                       :key="level.value"
@@ -72,11 +84,11 @@
                 </a-form-item>
 
                 <a-form-item name="reporterName" label="报警人" :rules="[{required: true, message: '请输入报警人姓名'}]" class="name-field">
-                  <a-input v-model:value="form.reporterName" placeholder="姓名" size="small" style="width: 85px" />
+                  <a-input v-model:value="form.reporterName" placeholder="姓名" size="small" style="width: 85px" data-field="reporterName" />
                 </a-form-item>
 
                 <a-form-item name="reporterPhone" label="电话" :rules="[{required: true, message: '请输入联系电话'}]" class="phone-field">
-                  <a-input v-model:value="form.reporterPhone" placeholder="手机号" size="small" style="width: 110px" />
+                  <a-input v-model:value="form.reporterPhone" placeholder="手机号" size="small" style="width: 110px" data-field="reporterPhone" />
                 </a-form-item>
 
                 <a-form-item name="reportTime" label="时间" class="time-field">
@@ -94,7 +106,7 @@
               <!-- 第二行：地点和描述 -->
               <div class="inline-row secondary-row">
                 <a-form-item name="incidentLocation" label="地点" :rules="[{required: true, message: '请输入事发地点'}]" class="location-field">
-                  <div class="location-input-group">
+                  <div class="location-input-group" data-field="incidentLocation">
                     <SmartLocationInput
                       v-model="form.incidentLocation"
                       placeholder="事发地点"
@@ -118,6 +130,7 @@
                     show-count
                     size="small"
                     style="width: 300px"
+                    data-field="description"
                   />
                 </a-form-item>
               </div>
@@ -125,7 +138,7 @@
               <!-- 第三行：处理信息（仅编辑时显示） -->
               <div class="inline-row status-row" v-if="isEdit">
                 <a-form-item name="status" label="状态" class="status-field">
-                  <div class="compact-status-buttons">
+                  <div class="compact-status-buttons" data-field="status">
                     <div
                       v-for="status in POLICE_REPORT_STATUS_ENUM"
                       :key="status.value"
@@ -138,7 +151,7 @@
                 </a-form-item>
 
                 <a-form-item name="handlerName" label="处理人" v-if="form.status > 1" class="handler-field">
-                  <a-input v-model:value="form.handlerName" placeholder="处理人" size="small" style="width: 90px" />
+                  <a-input v-model:value="form.handlerName" placeholder="处理人" size="small" style="width: 90px" data-field="handlerName" />
                 </a-form-item>
 
                 <a-form-item name="handleResult" label="结果" v-if="form.status >= 3" class="result-field">
@@ -149,6 +162,7 @@
                     :maxlength="100"
                     size="small"
                     style="width: 200px"
+                    data-field="handleResult"
                   />
                 </a-form-item>
               </div>
@@ -181,6 +195,7 @@
                 placeholder="备注..."
                 :maxlength="100"
                 size="small"
+                data-field="remark"
               />
             </div>
 
@@ -206,11 +221,15 @@
 </template>
 
 <script setup lang="ts">
-  import { reactive, ref, onMounted, computed, watch } from 'vue';
+  // 立即执行的调试日志，用于确认文件是否被正确加载
+  console.log('🌟 [IMMEDIATE DEBUG] police-report-edit.vue 文件已被加载！当前时间:', new Date().toLocaleTimeString());
+
+  import { reactive, ref, onMounted, computed, watch, onUnmounted } from 'vue';
   import { useRoute, useRouter } from 'vue-router';
-  import { message } from 'ant-design-vue';
+  import { message, Modal } from 'ant-design-vue';
   import { SmartLoading } from '/@/components/framework/smart-loading';
   import SmartLocationInput from '/@/components/framework/smart-location-input/index.vue';
+  import PoliceEditLock from './components/police-edit-lock.vue';
   import { policeReportApi } from '/@/api/business/oa/police-report-api';
   import { smartSentry } from '/@/lib/smart-sentry';
   import {
@@ -218,6 +237,7 @@
     POLICE_REPORT_LEVEL_ENUM,
     POLICE_REPORT_STATUS_ENUM
   } from '/@/constants/business/oa/police-report-const';
+  import { getWebSocketClient } from '/@/utils/websocket-manager';
   import dayjs from 'dayjs';
   import {
     ArrowLeftOutlined,
@@ -245,6 +265,9 @@
   const lastSaveTime = ref('');
   const reporterSuggestions = ref([]);
   const formRef = ref();
+  const editLockRef = ref();
+  const isLocked = ref(false);
+  const currentSeatId = ref(null); // 当前席位ID，从用户信息或API获取
 
   // 地址选择相关状态
 
@@ -259,8 +282,8 @@
   const formDefault = {
     reportId: null,
     reportNumber: '',
-    reportType: null,
-    reportLevel: null,
+    reportType: 1, // 默认为"刑事案件"
+    reportLevel: 2, // 默认为"中"级别
     reporterName: '',
     reporterPhone: '',
     reporterIdCard: '',
@@ -279,17 +302,198 @@
   };
 
   const form = reactive({ ...formDefault });
+  console.log('📋 [Form Debug] 表单对象初始化:', form);
 
   // 计算属性
   const isEdit = computed(() => !!route.query.reportId);
   const reportId = computed(() => route.query.reportId as string);
 
+  // 调试状态变量
+  console.log('🐛 [Vue Debug] isEdit 初始值:', isEdit.value);
+  console.log('🐛 [Vue Debug] reportId 初始值:', reportId.value);
+  console.log('🐛 [Vue Debug] route.query:', route.query);
+
+
+  // --------------------------- WebSocket实时同步 ---------------------------
+
+  let wsClient: any = null;
+
+  // 处理其他用户的警情更新
+  function handlePoliceCaseUpdate(message: SeatSyncMessage) {
+    if (message.type === 'POLICE_CASE_UPDATE' &&
+        message.policeCaseId &&
+        reportId.value &&
+        message.policeCaseId.toString() === reportId.value) {
+
+      console.log('收到当前警情的更新消息:', message);
+
+      // 显示更新提示
+      Modal.confirm({
+        title: '警情已被其他用户更新',
+        content: `${message.message || '其他用户更新了此警情'}，是否重新加载最新数据？`,
+        okText: '重新加载',
+        cancelText: '继续编辑',
+        onOk: () => {
+          // 重新加载数据
+          getDetail();
+          message.success('已加载最新数据');
+        },
+        onCancel: () => {
+          message.warning('请注意数据可能不是最新版本');
+        }
+      });
+    }
+  }
+
+  // 处理字段实时同步消息
+  function handleFieldSync(message: SeatSyncMessage) {
+    console.log('📥 [Field Sync Debug] 收到字段同步消息:', message);
+
+    if (message.type === 'POLICE_CASE_FIELD_SYNC') {
+      console.log('📥 [Field Sync Debug] 消息类型匹配:', {
+        policeCaseId: message.policeCaseId,
+        currentReportId: reportId.value,
+        messageData: message.data
+      });
+
+      if (message.policeCaseId &&
+          reportId.value &&
+          message.policeCaseId.toString() === reportId.value &&
+          message.data) {
+
+        console.log('✅ [Field Sync Debug] 条件检查通过，开始处理字段同步');
+
+        const { fieldName, fieldValue } = message.data;
+        console.log('📝 [Field Sync Debug] 处理字段更新:', { fieldName, fieldValue, currentValue: form[fieldName] });
+
+        // 更新表单字段值
+        if (form[fieldName] !== undefined) {
+          const oldValue = form[fieldName];
+          form[fieldName] = fieldValue;
+          console.log('🔄 [Field Sync Debug] 字段值已更新:', { fieldName, oldValue, newValue: fieldValue });
+
+          // 显示实时编辑提示
+          const fieldDisplayNames = {
+            reportType: '警情类型',
+            reportLevel: '紧急程度',
+            reporterName: '报警人姓名',
+            reporterPhone: '报警人电话',
+            incidentLocation: '事发地点',
+            description: '事件描述',
+            status: '处理状态',
+            handlerName: '处理人',
+            handleResult: '处理结果',
+            remark: '备注'
+          };
+
+          const displayName = fieldDisplayNames[fieldName] || fieldName;
+          const userName = message.data.userName || '其他用户';
+          message.info(`${userName}正在编辑「${displayName}」`, 2);
+
+          // 添加视觉指示器
+          const fieldElement = document.querySelector(`[data-field="${fieldName}"]`);
+          if (fieldElement) {
+            console.log('🎨 [Field Sync Debug] 添加视觉指示器');
+            fieldElement.classList.add('field-editing-indicator');
+            setTimeout(() => {
+              fieldElement.classList.remove('field-editing-indicator');
+            }, 3000);
+          } else {
+            console.warn('❌ [Field Sync Debug] 未找到字段元素:', fieldName);
+          }
+        } else {
+          console.warn('❌ [Field Sync Debug] 表单中不存在字段:', fieldName);
+        }
+      } else {
+        console.log('❌ [Field Sync Debug] 条件检查失败，跳过处理');
+      }
+    } else {
+      console.log('❌ [Field Sync Debug] 消息类型不匹配:', message.type);
+    }
+  }
+
+  // 字段同步防抖函数
+  const fieldSyncDebounce = new Map();
+
+  function syncFieldUpdate(fieldName: string, fieldValue: any) {
+    console.log('🔄 [Field Sync Debug] 开始字段同步:', {
+      fieldName,
+      fieldValue,
+      reportId: reportId.value
+    });
+
+    if (!reportId.value) {
+      console.warn('❌ [Field Sync Debug] reportId为空，跳过同步');
+      return;
+    }
+
+    // 清除之前的定时器
+    if (fieldSyncDebounce.has(fieldName)) {
+      console.log('⏰ [Field Sync Debug] 清除之前的防抖定时器:', fieldName);
+      clearTimeout(fieldSyncDebounce.get(fieldName));
+    }
+
+    // 设置新的防抖定时器
+    const timer = setTimeout(async () => {
+      try {
+        console.log('📡 [Field Sync Debug] 发送字段同步请求:', {
+          reportId: reportId.value,
+          fieldName,
+          fieldValue
+        });
+
+        await policeReportApi.syncFieldUpdate(reportId.value, fieldName, fieldValue);
+        console.log(`✅ [Field Sync Debug] 字段 ${fieldName} 同步成功`);
+      } catch (error) {
+        console.error(`❌ [Field Sync Debug] 字段 ${fieldName} 同步失败:`, error);
+      }
+    }, 500); // 500ms 防抖延迟
+
+    fieldSyncDebounce.set(fieldName, timer);
+  }
 
   // 生命周期
   onMounted(() => {
+    console.log('🚀 [Page Debug] 警情编辑页面已加载');
+    console.log('🚀 [Page Debug] isEdit状态:', isEdit.value);
+    console.log('🚀 [Page Debug] reportId:', reportId.value);
+    console.log('🚀 [Page Debug] route.query:', route.query);
+
     if (isEdit.value) {
+      console.log('✅ [Page Debug] 是编辑模式，开始加载详情');
       getDetail();
+    } else {
+      console.log('❌ [Page Debug] 不是编辑模式，跳过加载详情');
     }
+
+    // 初始化WebSocket监听
+    try {
+      wsClient = getWebSocketClient();
+      wsClient.on('POLICE_CASE_UPDATE', handlePoliceCaseUpdate);
+      wsClient.on('POLICE_CASE_FIELD_SYNC', handleFieldSync);
+      console.log('🔌 [Page Debug] 警情编辑页面WebSocket监听已启动');
+      console.log('🔌 [Page Debug] WebSocket连接状态:', wsClient.readyState);
+    } catch (error) {
+      console.error('❌ [Page Debug] 启动WebSocket监听失败:', error);
+    }
+  });
+
+  onUnmounted(() => {
+    // 清理WebSocket监听
+    if (wsClient) {
+      wsClient.off('POLICE_CASE_UPDATE', handlePoliceCaseUpdate);
+      wsClient.off('POLICE_CASE_FIELD_SYNC', handleFieldSync);
+      console.log('警情编辑页面WebSocket监听已清理');
+    }
+
+    // 清理定时器
+    clearTimeout(autoSaveTimer);
+
+    // 清理字段同步防抖定时器
+    fieldSyncDebounce.forEach((timer) => {
+      clearTimeout(timer);
+    });
+    fieldSyncDebounce.clear();
   });
 
   // 自动保存草稿
@@ -305,6 +509,108 @@
     },
     { deep: true }
   );
+
+  // 添加一个测试用的简单监听器
+  watch(() => form, (newForm) => {
+    console.log('🔍 [Test Debug] 表单对象发生了变化 (deep watch)');
+  }, { deep: true });
+
+  // 简单测试watch - 应该总是触发
+  watch(() => form.reporterName, (newValue, oldValue) => {
+    console.log('🚨 [SIMPLE TEST] reporterName 变化了!', { newValue, oldValue });
+    console.log('🚨 [SIMPLE TEST] isEdit 值:', isEdit.value);
+  });
+
+  // 监听isEdit变化
+  watch(() => isEdit.value, (newValue, oldValue) => {
+    console.log('🎯 [isEdit Debug] isEdit 变化:', { newValue, oldValue });
+  });
+
+  // 监听route变化
+  watch(() => route.query, (newQuery, oldQuery) => {
+    console.log('🛣️ [Route Debug] route.query 变化:', { newQuery, oldQuery });
+  });
+
+  // 实时字段同步监听器
+  watch(() => form.reportType, (newValue, oldValue) => {
+    console.log('📝 [Field Watch Debug] reportType变化:', { newValue, oldValue, isEdit: isEdit.value });
+    if (isEdit.value && newValue !== null && newValue !== oldValue) {
+      console.log('✅ [Field Watch Debug] 触发reportType同步');
+      syncFieldUpdate('reportType', newValue);
+    }
+  });
+
+  watch(() => form.reportLevel, (newValue, oldValue) => {
+    console.log('📝 [Field Watch Debug] reportLevel变化:', { newValue, oldValue, isEdit: isEdit.value });
+    if (isEdit.value && newValue !== null && newValue !== oldValue) {
+      console.log('✅ [Field Watch Debug] 触发reportLevel同步');
+      syncFieldUpdate('reportLevel', newValue);
+    }
+  });
+
+  watch(() => form.reporterName, (newValue, oldValue) => {
+    console.log('📝 [Field Watch Debug] reporterName变化:', { newValue, oldValue, isEdit: isEdit.value });
+    if (isEdit.value && newValue && newValue.trim() && newValue !== oldValue) {
+      console.log('✅ [Field Watch Debug] 触发reporterName同步');
+      syncFieldUpdate('reporterName', newValue.trim());
+    }
+  });
+
+  watch(() => form.reporterPhone, (newValue, oldValue) => {
+    console.log('📝 [Field Watch Debug] reporterPhone变化:', { newValue, oldValue, isEdit: isEdit.value });
+    if (isEdit.value && newValue && newValue.trim() && newValue !== oldValue) {
+      console.log('✅ [Field Watch Debug] 触发reporterPhone同步');
+      syncFieldUpdate('reporterPhone', newValue.trim());
+    }
+  });
+
+  watch(() => form.incidentLocation, (newValue, oldValue) => {
+    console.log('📝 [Field Watch Debug] incidentLocation变化:', { newValue, oldValue, isEdit: isEdit.value });
+    if (isEdit.value && newValue && newValue.trim() && newValue !== oldValue) {
+      console.log('✅ [Field Watch Debug] 触发incidentLocation同步');
+      syncFieldUpdate('incidentLocation', newValue.trim());
+    }
+  });
+
+  watch(() => form.description, (newValue, oldValue) => {
+    console.log('📝 [Field Watch Debug] description变化:', { newValue, oldValue, isEdit: isEdit.value });
+    if (isEdit.value && newValue && newValue.trim() && newValue !== oldValue) {
+      console.log('✅ [Field Watch Debug] 触发description同步');
+      syncFieldUpdate('description', newValue.trim());
+    }
+  });
+
+  watch(() => form.status, (newValue, oldValue) => {
+    console.log('📝 [Field Watch Debug] status变化:', { newValue, oldValue, isEdit: isEdit.value });
+    if (isEdit.value && newValue !== null && newValue !== oldValue) {
+      console.log('✅ [Field Watch Debug] 触发status同步');
+      syncFieldUpdate('status', newValue);
+    }
+  });
+
+  watch(() => form.handlerName, (newValue, oldValue) => {
+    console.log('📝 [Field Watch Debug] handlerName变化:', { newValue, oldValue, isEdit: isEdit.value });
+    if (isEdit.value && newValue && newValue.trim() && newValue !== oldValue) {
+      console.log('✅ [Field Watch Debug] 触发handlerName同步');
+      syncFieldUpdate('handlerName', newValue.trim());
+    }
+  });
+
+  watch(() => form.handleResult, (newValue, oldValue) => {
+    console.log('📝 [Field Watch Debug] handleResult变化:', { newValue, oldValue, isEdit: isEdit.value });
+    if (isEdit.value && newValue && newValue.trim() && newValue !== oldValue) {
+      console.log('✅ [Field Watch Debug] 触发handleResult同步');
+      syncFieldUpdate('handleResult', newValue.trim());
+    }
+  });
+
+  watch(() => form.remark, (newValue, oldValue) => {
+    console.log('📝 [Field Watch Debug] remark变化:', { newValue, oldValue, isEdit: isEdit.value });
+    if (isEdit.value && newValue && newValue.trim() && newValue !== oldValue) {
+      console.log('✅ [Field Watch Debug] 触发remark同步');
+      syncFieldUpdate('remark', newValue.trim());
+    }
+  });
 
   // 方法定义
   async function getDetail() {
@@ -371,6 +677,21 @@
 
   function goBack() {
     router.push('/oa/police/report-list');
+  }
+
+  // 编辑锁事件处理
+  function handleLockStatusChange(locked: boolean) {
+    isLocked.value = locked;
+  }
+
+  function handleEditAccessGranted() {
+    isLocked.value = false;
+    message.success('获得编辑权限');
+  }
+
+  function handleEditAccessDenied(reason: string) {
+    isLocked.value = true;
+    message.warning(reason);
   }
 
   // 新增现代化交互方法
@@ -2202,4 +2523,91 @@
 }
 
 /* 编辑页面样式优化完成 - 智能地址输入功能已迁移到组件 */
+
+/* 字段编辑指示器 */
+.field-editing-indicator {
+  position: relative;
+  animation: fieldEditPulse 2s ease-in-out infinite;
+}
+
+.field-editing-indicator::before {
+  content: '';
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  right: -2px;
+  bottom: -2px;
+  background: linear-gradient(45deg, #40a9ff, #ff7875, #40a9ff);
+  border-radius: 6px;
+  z-index: -1;
+  animation: fieldEditBorder 3s linear infinite;
+}
+
+.field-editing-indicator::after {
+  content: '正在编辑...';
+  position: absolute;
+  top: -20px;
+  right: 0;
+  background: #1890ff;
+  color: white;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  line-height: 1.2;
+  z-index: 10;
+  animation: fadeInOut 3s ease-in-out;
+}
+
+@keyframes fieldEditPulse {
+  0%, 100% {
+    box-shadow: 0 0 5px rgba(24, 144, 255, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 15px rgba(24, 144, 255, 0.8), 0 0 25px rgba(24, 144, 255, 0.3);
+  }
+}
+
+@keyframes fieldEditBorder {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 100% 50%;
+  }
+}
+
+@keyframes fadeInOut {
+  0% {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+  20%, 80% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+}
+
+/* 针对不同组件的编辑指示器样式调整 */
+.compact-level-buttons.field-editing-indicator,
+.compact-status-buttons.field-editing-indicator,
+.compact-type-selector.field-editing-indicator {
+  border-radius: 8px;
+}
+
+.location-input-group.field-editing-indicator {
+  border-radius: 6px;
+}
+
+/* 确保指示器在所有输入组件上都能正确显示 */
+.field-editing-indicator input,
+.field-editing-indicator textarea,
+.field-editing-indicator .ant-select-selector {
+  position: relative;
+  z-index: 1;
+}
+
 </style>修改时间戳: 2025年09月22日 16:08:28

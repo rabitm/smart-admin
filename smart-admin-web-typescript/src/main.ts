@@ -33,6 +33,7 @@ import LocalStorageKeyConst from '/@/constants/local-storage-key-const.js';
 import '/@/utils/ployfill';
 import { useDictStore } from '/@/store/modules/system/dict.js';
 import { dictApi } from '/@/api/support/dict-api.js';
+import { initWebSocket } from '/@/utils/websocket-manager';
 
 /*
  * -------------------- ※ 着重 解释说明下main.js的初始化逻辑 begin ※ --------------------
@@ -63,6 +64,14 @@ async function getLoginInfo() {
     useDictStore().initData(dictRes.data);
     //更新用户信息到pinia
     useUserStore().setUserLoginInfo(res.data);
+
+    // 初始化WebSocket连接
+    try {
+      await initWebSocket();
+      console.log('WebSocket连接初始化成功');
+    } catch (error) {
+      console.error('WebSocket连接初始化失败:', error);
+    }
   } catch (e) {
     message.error(e.data ? e.data.msg : e.message);
     smartSentry.captureError(e);

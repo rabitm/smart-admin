@@ -107,6 +107,8 @@
     (e: 'change', value: string): void;
     (e: 'select', option: LocationOption): void;
     (e: 'clear'): void;
+    (e: 'focus', event: FocusEvent): void;
+    (e: 'blur', event: FocusEvent): void;
   }
 
   const emit = defineEmits<Emits>();
@@ -268,14 +270,16 @@
   }
 
   // 聚焦处理
-  function handleFocus() {
+  function handleFocus(event: FocusEvent) {
+    emit('focus', event);
     if (inputValue.value && inputValue.value.length >= props.minSearchLength) {
       searchLocationSuggestions(inputValue.value);
     }
   }
 
   // 失焦处理
-  function handleBlur() {
+  function handleBlur(event: FocusEvent) {
+    emit('blur', event);
     setTimeout(() => {
       showSuggestions.value = false;
       activeIndex.value = -1;

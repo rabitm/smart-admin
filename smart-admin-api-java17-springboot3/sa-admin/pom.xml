@@ -23,6 +23,12 @@
             <version>3.0.0</version>
         </dependency>
 
+        <!-- WebSocket support for seat real-time synchronization -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-websocket</artifactId>
+        </dependency>
+
     </dependencies>
 
     <build>

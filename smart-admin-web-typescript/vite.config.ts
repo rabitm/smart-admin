@@ -38,15 +38,14 @@ export default {
   // 服务端渲染
   server: {
     host: '0.0.0.0',
-    port: 8081,
-    server: {
-      proxy: {
-        // 代理路径
-        '/': {
-          target: 'http://127.0.0.1:1024/', // 目标服务器地址
-          changeOrigin: true, // 是否修改请求头中的 Origin 字段
-          rewrite: (path) => path, // 重写路径
-        },
+    port: 8081, // 临时改为8083端口
+    strictPort: false, // 允许端口自动切换
+    proxy: {
+      // 代理所有API请求到后端服务
+      '/api': {
+        target: 'http://127.0.0.1:1024', // 目标服务器地址
+        changeOrigin: true, // 是否修改请求头中的 Origin 字段
+        rewrite: (path) => path, // 重写路径
       },
     }
   },

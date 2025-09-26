@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="net.lab1024.sa.admin.module.business.oa.police.dao.PoliceReportOperationLogDao">
+
+    <!-- 查询协作历史记录 -->
+    <select id="queryCollaborationHistory" resultType="net.lab1024.sa.admin.module.business.oa.police.domain.vo.CollaborationHistoryVO">
+        SELECT
+            id,
+            operation_type as type,
+            'police_report' as entityType,
+            report_id as entityId,
+            field_name as fieldName,
+            field_label as fieldLabel,
+            old_value as oldValue,
+            new_value as newValue,
+            user_id as userId,
+            user_name as userName,
+            ip_address as ipAddress,
+            user_agent as userAgent,
+            description,
+            operation_time as operationTime,
+            UNIX_TIMESTAMP(operation_time) * 1000 as timestamp,
+            ext_data
+        FROM t_police_report_operation_log
+        <where>
+            <if test="query.entityId != null">
+                AND report_id = #{query.entityId}
+            </if>
+            <if test="query.userId != null">
+                AND user_id = #{query.userId}
+            </if>
+            <if test="query.fieldName != null and query.fieldName != ''">
+                AND field_name = #{query.fieldName}
+            </if>
+            <if test="query.operationType != null and query.operationType != ''">
+                AND operation_type = #{query.operationType}
+            </if>
+            <if test="query.startTime != null">
+                AND UNIX_TIMESTAMP(operation_time) * 1000 &gt;= #{query.startTime}
+            </if>
+            <if test="query.endTime != null">
+                AND UNIX_TIMESTAMP(operation_time) * 1000 &lt;= #{query.endTime}
+            </if>
+        </where>
+        ORDER BY operation_time DESC
+    </select>
+
+    <!-- 统计协作历史记录总数 -->
+    <select id="countCollaborationHistory" resultType="Long">
+        SELECT COUNT(1)
+        FROM t_police_report_operation_log
+        <where>
+            <if test="query.entityId != null">
+                AND report_id = #{query.entityId}
+            </if>
+            <if test="query.userId != null">
+                AND user_id = #{query.userId}
+            </if>
+            <if test="query.fieldName != null and query.fieldName != ''">
+                AND field_name = #{query.fieldName}
+            </if>
+            <if test="query.operationType != null and query.operationType != ''">
+                AND operation_type = #{query.operationType}
+            </if>
+            <if test="query.startTime != null">
+                AND UNIX_TIMESTAMP(operation_time) * 1000 &gt;= #{query.startTime}
+            </if>
+            <if test="query.endTime != null">
+                AND UNIX_TIMESTAMP(operation_time) * 1000 &lt;= #{query.endTime}
+            </if>
+        </where>
+    </select>
+
+    <!-- 根据报告ID查询操作记录 -->
+    <select id="queryByReportId" resultType="net.lab1024.sa.admin.module.business.oa.police.domain.entity.PoliceReportOperationLogEntity">
+        SELECT *
+        FROM t_police_report_operation_log
+        WHERE report_id = #{reportId}
+        ORDER BY operation_time DESC
+        <if test="limit != null and limit > 0">
+            LIMIT #{limit}
+        </if>
+    </select>
+
+    <!-- 根据用户ID查询操作记录 -->
+    <select id="queryByUserId" resultType="net.lab1024.sa.admin.module.business.oa.police.domain.entity.PoliceReportOperationLogEntity">
+        SELECT *
+        FROM t_police_report_operation_log
+        WHERE user_id = #{userId}
+        ORDER BY operation_time DESC
+        <if test="limit != null and limit > 0">
+            LIMIT #{limit}
+        </if>
+    </select>
+
+    <!-- 删除指定报告的所有操作记录 -->
+    <delete id="deleteByReportId">
+        DELETE FROM t_police_report_operation_log
+        WHERE report_id = #{reportId}
+    </delete>
+
+    <!-- 统计操作记录数量 -->
+    <select id="countOperationsByReportId" resultType="Long">
+        SELECT COUNT(1)
+        FROM t_police_report_operation_log
+        WHERE report_id = #{reportId}
+    </select>
+
+    <!-- 查询最近的操作记录 -->
+    <select id="queryRecentOperations" resultType="net.lab1024.sa.admin.module.business.oa.police.domain.entity.PoliceReportOperationLogEntity">
+        SELECT *
+        FROM t_police_report_operation_log
+        WHERE report_id = #{reportId}
+        <if test="hours != null and hours > 0">
+            AND operation_time >= DATE_SUB(NOW(), INTERVAL #{hours} HOUR)
+        </if>
+        ORDER BY operation_time DESC
+    </select>
+
+</mapper>

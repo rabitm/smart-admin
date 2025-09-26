@@ -107,9 +107,21 @@ npm run build:app       # Build App
 ### Module Structure
 
 Backend modules are organized under `net.lab1024.sa.admin.module`:
-- **business**: Business-specific modules (category, goods, etc.)
-- **system**: System management (employee, department, role, menu, etc.) 
+- **business**: Business-specific modules including:
+  - **oa.police**: Police Emergency Management System with real-time collaboration
+  - **category, goods**: Standard business modules
+- **system**: System management (employee, department, role, menu, etc.)
 - **support**: Support modules (login logs, operation logs, file management, etc.)
+
+### Police Emergency Management System (v3.27.0+)
+
+A comprehensive real-time police emergency intake system with the following features:
+- **Multi-user Collaboration**: Real-time field-level editing with user conflict detection
+- **Professional Field Configuration**: Dynamic form rendering based on incident types
+- **WebSocket Integration**: Live updates and field locking across multiple clients
+- **Smart Location Input**: Integrated location selection with collaboration support
+- **Operation History**: Complete audit trail of all user actions and field changes
+- **Professional Indicators**: Visual indicators showing who is editing which fields
 
 ### Configuration Files
 - **Frontend**: `.env.*` files for different environments
@@ -179,3 +191,73 @@ Backend modules are organized under `net.lab1024.sa.admin.module`:
 - Use MyBatis-Plus for ORM operations
 - Follow the DAO pattern established in existing modules
 - Database scripts are maintained in the `/sql` directory
+
+## Advanced Features & Patterns
+
+### Real-time Collaboration System
+
+The police emergency management system implements a sophisticated real-time collaboration framework:
+
+**Frontend Collaboration Components**:
+- `field-collaboration-manager.ts`: Core field-level state management
+- `global-collaboration-manager.ts`: Global collaboration state and event handling
+- `websocket-client.ts`: WebSocket connection management
+- `CollaborationFieldIndicator.vue`: Visual field editing indicators
+- `CollaborationActivityFeed.vue`: Real-time activity timeline
+
+**Backend Collaboration Services**:
+- `CollaborationHistoryService.java`: Operation history tracking
+- `PoliceEditLockService.java`: Field locking and conflict resolution
+- `CollaborationWebSocketConfig.java`: WebSocket configuration
+
+**Key Collaboration Features**:
+- **Field-Level Locking**: Only one user can edit a specific field at a time
+- **Visual Indicators**: Real-time display of who is editing which fields
+- **Auto-unlock Timers**: Automatic release of locked fields after inactivity
+- **Conflict Resolution**: Intelligent handling of simultaneous edits
+- **Operation History**: Complete audit trail with user attribution
+- **Cross-Client Sync**: Real-time updates across all connected clients
+
+### Dynamic Form Configuration
+
+Professional fields are dynamically configured based on incident types:
+- Forms adapt based on selected emergency type (fire, rescue, medical, etc.)
+- Field configurations stored in database with API-driven rendering
+- Support for various field types: text, select, multi-select, location, etc.
+- Real-time form structure synchronization across clients
+
+### Key Technical Patterns
+
+**Vue 3 Composition API**: Modern reactive programming with `ref()`, `computed()`, `watch()`
+**WebSocket Integration**: Bi-directional real-time communication with auto-reconnection
+**Field State Management**: Reactive field-level state with conflict detection
+**Defensive Coding**: Comprehensive null checks and error handling
+**Memory Management**: Proper cleanup of event listeners and timers
+
+## Troubleshooting & Known Issues
+
+### Data Loss Prevention
+A critical fix was implemented to prevent professional field data loss during multi-user collaboration:
+- **Issue**: Data would disappear when switching incident types during collaborative editing
+- **Root Cause**: `clearDynamicFields()` was called before data reload in `loadEditData()`
+- **Solution**: Reordered execution and added skip flags for edit-mode loading
+
+### Performance Considerations
+- Debounced field updates (500ms) to reduce server load
+- Efficient field state diffing to minimize unnecessary updates
+- Auto-cleanup of stale collaboration sessions
+- Connection pooling for WebSocket management
+
+## Development Tips
+
+### Working with Collaboration Features
+1. Always test multi-user scenarios with multiple browser tabs
+2. Use browser dev tools to monitor WebSocket messages
+3. Check console logs for collaboration debug information
+4. Test field locking behavior across different user sessions
+
+### Debugging Collaboration Issues
+- Enable debug logs with `console.log` statements prefixed with emoji identifiers
+- Monitor WebSocket connection status in browser dev tools
+- Check user ID consistency across different authentication methods
+- Verify field state synchronization using Vue DevTools

@@ -10,7 +10,7 @@
     <div
       v-for="field in fields"
       :key="getFieldKey(field)"
-      class="pro-field"
+      class="pro-field collaboration-field"
       :class="{ 'compact-group-field': getFieldType(field) === 'compact-group' }"
     >
       <div class="pro-label">
@@ -19,12 +19,19 @@
         <span v-if="getFieldRequired(field)" class="required-mark">*</span>
       </div>
 
+      <!-- 协作指示器 -->
+      <CollaborationFieldIndicator
+        :field-name="getFieldKey(field)"
+        :field-state="getFieldState(getFieldKey(field))"
+      />
+
       <!-- 紧凑组合字段 -->
       <div v-if="getFieldType(field) === 'compact-group'" class="compact-group">
         <div
           v-for="subField in getFieldChildren(field)"
           :key="getFieldKey(subField)"
-          class="compact-subfield"
+          :class="['compact-subfield', { 'locked-by-other': isFieldLockedByOther(getFieldKey(subField)) }]"
+          style="position: relative;"
         >
           <span class="subfield-label">{{ getFieldLabel(subField) }}:</span>
           <!-- 子字段快捷选项 -->
@@ -33,8 +40,8 @@
               v-for="option in getFieldQuickOptions(subField)"
               :key="option"
               :class="['compact-btn', { 'selected': isOptionSelected(getFieldKey(subField), option) }]"
-              @click="selectOption(getFieldKey(subField), option)"
-              :disabled="disabled"
+              @click="!isFieldLockedByOther(getFieldKey(subField)) && (onFieldFocus(getFieldKey(subField)), selectOption(getFieldKey(subField), option))"
+              :disabled="disabled || isFieldLockedByOther(getFieldKey(subField))"
             >
               {{ option }}
             </button>
@@ -47,8 +54,8 @@
                 v-for="item in getDictOptions(getFieldDictCode(subField))"
                 :key="item.dataValue"
                 :class="['compact-btn', { 'selected': modelValue[getFieldKey(subField)] === item.dataValue }]"
-                @click="updateField(getFieldKey(subField), item.dataValue)"
-                :disabled="disabled"
+                @click="!isFieldLockedByOther(getFieldKey(subField)) && (onFieldFocus(getFieldKey(subField)), updateField(getFieldKey(subField), item.dataValue))"
+                :disabled="disabled || isFieldLockedByOther(getFieldKey(subField))"
                 :title="item.dataLabel"
               >
                 {{ item.dataLabel }}
@@ -60,8 +67,8 @@
                 v-for="option in getFieldOptions(subField)"
                 :key="option"
                 :class="['compact-btn', { 'selected': modelValue[getFieldKey(subField)] === option }]"
-                @click="updateField(getFieldKey(subField), option)"
-                :disabled="disabled"
+                @click="!isFieldLockedByOther(getFieldKey(subField)) && (onFieldFocus(getFieldKey(subField)), updateField(getFieldKey(subField), option))"
+                :disabled="disabled || isFieldLockedByOther(getFieldKey(subField))"
               >
                 {{ option }}
               </button>
@@ -73,52 +80,68 @@
             type="text"
             :value="modelValue[getFieldKey(subField)] || ''"
             @input="updateField(getFieldKey(subField), ($event.target as HTMLInputElement).value)"
+            @focus="onFieldFocus(getFieldKey(subField))"
+            @blur="onFieldBlur(getFieldKey(subField))"
             :placeholder="getFieldPlaceholder(subField)"
-            :disabled="disabled"
+            :disabled="disabled || isFieldLockedByOther(getFieldKey(subField))"
             class="compact-input"
           />
+
+          <!-- 子字段锁定遮罩 -->
+          <div v-if="isFieldLockedByOther(getFieldKey(subField))" class="field-lock-overlay">
+            <span class="lock-icon">🔒</span>
+            <span class="lock-text">{{ getFieldState(getFieldKey(subField)).lockedBy?.name }} 正在编辑</span>
+          </div>
         </div>
       </div>
 
       <!-- 紧凑多选 -->
-      <div v-else-if="getFieldType(field) === 'checkbox-compact'" class="checkbox-compact">
+      <div v-else-if="getFieldType(field) === 'checkbox-compact'" :class="['checkbox-compact', { 'locked-by-other': isFieldLockedByOther(getFieldKey(field)) }]">
         <button
           v-for="option in getFieldQuickOptions(field) || getFieldOptions(field)"
           :key="option"
           :class="['compact-checkbox-btn', { 'selected': isCheckboxSelected(getFieldKey(field), option) }]"
-          @click="toggleCheckbox(getFieldKey(field), option)"
-          :disabled="disabled"
+          @click="(debugButtonClick('紧凑多选', getFieldKey(field), option), !isFieldLockedByOther(getFieldKey(field)) && (onFieldFocus(getFieldKey(field)), toggleCheckbox(getFieldKey(field), option)))"
+          :disabled="disabled || isFieldLockedByOther(getFieldKey(field))"
         >
           <span class="check-icon">{{ isCheckboxSelected(getFieldKey(field), option) ? '✓' : '' }}</span>
           {{ option }}
         </button>
+        <div v-if="isFieldLockedByOther(getFieldKey(field))" class="field-lock-overlay">
+          <span class="lock-icon">🔒</span>
+          <span class="lock-text">{{ getFieldState(getFieldKey(field)).lockedBy?.name }} 正在编辑</span>
+        </div>
       </div>
 
       <!-- 快捷选择按钮 -->
-      <div v-else-if="getFieldQuickOptions(field)" class="quick-options">
+      <div v-else-if="getFieldQuickOptions(field)" :class="['quick-options', { 'locked-by-other': isFieldLockedByOther(getFieldKey(field)) }]">
         <button
           v-for="(option, idx) in getFieldQuickOptions(field)"
           :key="option"
-          :class="['quick-btn', { 'selected': isOptionSelected(getFieldKey(field), option) }]"
-          @click="selectOption(getFieldKey(field), option)"
-          :disabled="disabled"
+          :class="['quick-btn', { 'selected': isOptionSelected(getFieldKey(field), option), 'debug-locked': isFieldLockedByOther(getFieldKey(field)) }]"
+          @click="(debugButtonClick('快捷选择', getFieldKey(field), option), !isFieldLockedByOther(getFieldKey(field)) && (onFieldFocus(getFieldKey(field)), selectOption(getFieldKey(field), option)))"
+          :disabled="disabled || isFieldLockedByOther(getFieldKey(field))"
           :title="`快捷键: ${idx + 1}`"
         >
           {{ option }}
-          <span class="btn-hotkey" v-if="!disabled">{{ idx + 1 }}</span>
+          <span class="btn-hotkey" v-if="!disabled && !isFieldLockedByOther(getFieldKey(field))">{{ idx + 1 }}</span>
         </button>
+        <div v-if="isFieldLockedByOther(getFieldKey(field))" class="field-lock-overlay">
+          <span class="lock-icon">🔒</span>
+          <span class="lock-text">{{ getFieldState(getFieldKey(field)).lockedBy?.name }} 正在编辑</span>
+        </div>
       </div>
 
       <!-- 选择按钮 -->
-      <div v-else-if="getFieldType(field) === 'select'" class="select-wrapper">
+      <div v-else-if="getFieldType(field) === 'select'" :class="['select-wrapper', { 'locked-by-other': isFieldLockedByOther(getFieldKey(field)) }]">
         <!-- 使用数据字典 - 平铺按钮式 -->
         <div v-if="getFieldDictCode(field)" class="select-options">
           <button
             v-for="item in getDictOptions(getFieldDictCode(field))"
             :key="item.dataValue"
             :class="['select-btn', { 'selected': modelValue[getFieldKey(field)] === item.dataValue }]"
-            @click="updateField(getFieldKey(field), item.dataValue)"
-            :disabled="disabled"
+            @click="(debugButtonClick('字典单选', getFieldKey(field), item.dataValue), !isFieldLockedByOther(getFieldKey(field)) && (onFieldFocus(getFieldKey(field)), updateField(getFieldKey(field), item.dataValue)))"
+            :disabled="disabled || isFieldLockedByOther(getFieldKey(field))"
             :title="item.dataLabel"
           >
             {{ item.dataLabel }}
@@ -130,24 +153,28 @@
             v-for="option in getFieldOptions(field)"
             :key="option"
             :class="['select-btn', { 'selected': modelValue[getFieldKey(field)] === option }]"
-            @click="updateField(getFieldKey(field), option)"
-            :disabled="disabled"
+            @click="(debugButtonClick('硬编码单选', getFieldKey(field), option), !isFieldLockedByOther(getFieldKey(field)) && (onFieldFocus(getFieldKey(field)), updateField(getFieldKey(field), option)))"
+            :disabled="disabled || isFieldLockedByOther(getFieldKey(field))"
           >
             {{ option }}
           </button>
         </div>
+        <div v-if="isFieldLockedByOther(getFieldKey(field))" class="field-lock-overlay">
+          <span class="lock-icon">🔒</span>
+          <span class="lock-text">{{ getFieldState(getFieldKey(field)).lockedBy?.name }} 正在编辑</span>
+        </div>
       </div>
 
       <!-- 多选 -->
-      <div v-else-if="getFieldType(field) === 'checkbox'" class="checkbox-wrapper">
+      <div v-else-if="getFieldType(field) === 'checkbox'" :class="['checkbox-wrapper', { 'locked-by-other': isFieldLockedByOther(getFieldKey(field)) }]">
         <!-- 使用数据字典 - 平铺按钮式 -->
         <div v-if="getFieldDictCode(field)" class="checkbox-options">
           <button
             v-for="item in getDictOptions(getFieldDictCode(field))"
             :key="item.dataValue"
             :class="['checkbox-btn', { 'selected': isDictCheckboxSelected(getFieldKey(field), item.dataValue) }]"
-            @click="toggleDictCheckbox(getFieldKey(field), item.dataValue)"
-            :disabled="disabled"
+            @click="(debugButtonClick('字典多选', getFieldKey(field), item.dataValue), !isFieldLockedByOther(getFieldKey(field)) && (onFieldFocus(getFieldKey(field)), toggleDictCheckbox(getFieldKey(field), item.dataValue)))"
+            :disabled="disabled || isFieldLockedByOther(getFieldKey(field))"
             :title="item.dataLabel"
           >
             <span class="check-icon">{{ isDictCheckboxSelected(getFieldKey(field), item.dataValue) ? '✓' : '' }}</span>
@@ -160,51 +187,73 @@
             v-for="option in getFieldOptions(field)"
             :key="option"
             :class="['checkbox-btn', { 'selected': isCheckboxSelected(getFieldKey(field), option) }]"
-            @click="toggleCheckbox(getFieldKey(field), option)"
-            :disabled="disabled"
+            @click="(debugButtonClick('硬编码多选', getFieldKey(field), option), !isFieldLockedByOther(getFieldKey(field)) && (onFieldFocus(getFieldKey(field)), toggleCheckbox(getFieldKey(field), option)))"
+            :disabled="disabled || isFieldLockedByOther(getFieldKey(field))"
           >
             <span class="check-icon">{{ isCheckboxSelected(getFieldKey(field), option) ? '✓' : '' }}</span>
             {{ option }}
           </button>
         </div>
+        <div v-if="isFieldLockedByOther(getFieldKey(field))" class="field-lock-overlay">
+          <span class="lock-icon">🔒</span>
+          <span class="lock-text">{{ getFieldState(getFieldKey(field)).lockedBy?.name }} 正在编辑</span>
+        </div>
       </div>
 
       <!-- 输入框 -->
-      <div v-else-if="getFieldType(field) === 'input'" class="input-wrapper">
+      <div v-else-if="getFieldType(field) === 'input'" :class="['input-wrapper', 'field-input-wrapper', { 'locked-by-other': isFieldLockedByOther(getFieldKey(field)) }]">
         <input
           type="text"
           :value="modelValue[getFieldKey(field)] || ''"
           @input="updateField(getFieldKey(field), ($event.target as HTMLInputElement).value)"
+          @focus="onFieldFocus(getFieldKey(field))"
+          @blur="onFieldBlur(getFieldKey(field))"
           :placeholder="getFieldPlaceholder(field) || `请输入${getFieldLabel(field)}`"
-          :disabled="disabled"
+          :disabled="disabled || isFieldLockedByOther(getFieldKey(field))"
           class="preview-input-field"
         />
+        <div v-if="isFieldLockedByOther(getFieldKey(field))" class="field-lock-overlay">
+          <span class="lock-icon">🔒</span>
+          <span class="lock-text">{{ getFieldState(getFieldKey(field)).lockedBy?.name }} 正在编辑</span>
+        </div>
       </div>
 
       <!-- 数字输入 -->
-      <div v-else-if="getFieldType(field) === 'number'" class="input-wrapper">
+      <div v-else-if="getFieldType(field) === 'number'" :class="['input-wrapper', 'field-input-wrapper', { 'locked-by-other': isFieldLockedByOther(getFieldKey(field)) }]">
         <input
           type="number"
           :value="modelValue[getFieldKey(field)] || ''"
           @input="updateField(getFieldKey(field), parseFloat(($event.target as HTMLInputElement).value) || null)"
+          @focus="onFieldFocus(getFieldKey(field))"
+          @blur="onFieldBlur(getFieldKey(field))"
           :placeholder="getFieldPlaceholder(field) || `请输入${getFieldLabel(field)}`"
-          :disabled="disabled"
+          :disabled="disabled || isFieldLockedByOther(getFieldKey(field))"
           class="preview-input-field"
           min="0"
         />
+        <div v-if="isFieldLockedByOther(getFieldKey(field))" class="field-lock-overlay">
+          <span class="lock-icon">🔒</span>
+          <span class="lock-text">{{ getFieldState(getFieldKey(field)).lockedBy?.name }} 正在编辑</span>
+        </div>
       </div>
 
       <!-- 文本域 -->
-      <div v-else-if="getFieldType(field) === 'textarea'" class="input-wrapper">
+      <div v-else-if="getFieldType(field) === 'textarea'" :class="['input-wrapper', 'field-input-wrapper', { 'locked-by-other': isFieldLockedByOther(getFieldKey(field)) }]">
         <textarea
           :value="modelValue[getFieldKey(field)] || ''"
           @input="updateField(getFieldKey(field), ($event.target as HTMLTextAreaElement).value)"
+          @focus="onFieldFocus(getFieldKey(field))"
+          @blur="onFieldBlur(getFieldKey(field))"
           :placeholder="getFieldPlaceholder(field) || `请输入${getFieldLabel(field)}`"
-          :disabled="disabled"
+          :disabled="disabled || isFieldLockedByOther(getFieldKey(field))"
           class="preview-textarea-field"
           rows="2"
           :maxlength="200"
         ></textarea>
+        <div v-if="isFieldLockedByOther(getFieldKey(field))" class="field-lock-overlay">
+          <span class="lock-icon">🔒</span>
+          <span class="lock-text">{{ getFieldState(getFieldKey(field)).lockedBy?.name }} 正在编辑</span>
+        </div>
       </div>
     </div>
   </div>
@@ -215,6 +264,11 @@
   import type { FieldItem } from '/@/api/business/oa/police-form-template-api';
   import type { PoliceFormFieldVO } from '/@/api/business/oa/police-form-config-api';
   import { useDictStore } from '/@/store/modules/system/dict';
+  import CollaborationFieldIndicator from '/@/components/business/collaboration/CollaborationFieldIndicator.vue';
+  import fieldCollaborationManager from '/@/utils/field-collaboration-manager';
+  import { useRoute } from 'vue-router';
+  import { useUserStore } from '/@/store/modules/system/user';
+  import { inject, onMounted, watch } from 'vue';
 
   // 通用字段接口 - 支持两种格式
   type UnifiedField = FieldItem | PoliceFormFieldVO;
@@ -237,6 +291,313 @@
 
   // 字典存储
   const dictStore = useDictStore();
+
+  // 用户存储
+  const userStore = useUserStore();
+
+  // 路由和协作
+  const route = useRoute();
+
+  // 同步管理器
+  const syncManager = inject('syncManager') as any;
+
+  // 锁定日志缓存，减少重复日志
+  let lockLogCache: string | null = null;
+
+  // 获取字段协作状态
+  function getFieldState(fieldName: string) {
+    const reportId = route.query.reportId?.toString() || '5';
+    const roomId = `police-report-${reportId}`;
+    const state = fieldCollaborationManager.getFieldState(roomId, fieldName);
+
+    // 添加反应式状态监听
+    if (process.env.NODE_ENV === 'development') {
+      // 为每个字段创建一个反应式监听器，跟踪状态变化
+      const stateKey = `${fieldName}_watcher`;
+      if (!(window as any)[stateKey]) {
+        (window as any)[stateKey] = watch(
+          () => ({ ...state }),
+          (newState, oldState) => {
+            console.log(`🔄 [Professional Fields] 字段状态变化:`, {
+              fieldName,
+              oldState,
+              newState,
+              stateReference: state,
+              timestamp: Date.now()
+            });
+          },
+          { deep: true, immediate: false }
+        );
+      }
+    }
+
+    return state;
+  }
+
+  // 判断字段是否被其他用户锁定
+  function isFieldLockedByOther(fieldName: string): boolean {
+    const fieldState = getFieldState(fieldName);
+    if (!fieldState.isLocked || !fieldState.lockedBy) {
+      // 如果字段未锁定，先检查是否有缓存的锁定状态需要清理
+      if (process.env.NODE_ENV === 'development') {
+        const cacheKey = `${fieldName}_false`;
+        if (!lockLogCache || lockLogCache !== cacheKey) {
+          console.log('🔓 [Professional Field Unlock Check]', {
+            fieldName,
+            isLocked: fieldState.isLocked,
+            lockedBy: fieldState.lockedBy,
+            result: 'unlocked',
+            timestamp: Date.now()
+          });
+          lockLogCache = cacheKey;
+        }
+      }
+      return false;
+    }
+
+    // 获取当前用户ID - 使用和emergency-intake.vue相同的逻辑
+    let currentUserId = '';
+    if (userStore.employeeId) {
+      currentUserId = userStore.employeeId.toString();
+    } else if (userStore.userInfo?.userId) {
+      currentUserId = userStore.userInfo.userId.toString();
+    } else if (userStore.userInfo?.employeeId) {
+      currentUserId = userStore.userInfo.employeeId.toString();
+    }
+
+    // 关键修复：如果被锁定，但锁定用户是当前用户，则返回false（允许当前用户继续操作）
+    const isLockedByOther = fieldState.lockedBy.id !== currentUserId;
+
+    // 只在开发模式且锁定状态变化时输出日志，减少噪音
+    if (process.env.NODE_ENV === 'development') {
+      const cacheKey = `${fieldName}_${isLockedByOther}`;
+      if (!lockLogCache || lockLogCache !== cacheKey) {
+        console.log('🔒 [Professional Field Lock Check]', {
+          fieldName,
+          isLocked: fieldState.isLocked,
+          lockedBy: fieldState.lockedBy,
+          currentUserId,
+          isLockedByOther,
+          message: isLockedByOther ? 'locked by other user' : 'locked by current user or unlocked',
+          fieldStateRef: fieldState,
+          timestamp: Date.now()
+        });
+        lockLogCache = cacheKey;
+      }
+    }
+
+    // 重要：只有在字段被其他用户锁定时才返回true，当前用户锁定的字段对自己不应该显示为locked
+    return isLockedByOther;
+  }
+
+  // 字段聚焦事件处理
+  function onFieldFocus(fieldName: string) {
+    const reportId = route.query.reportId?.toString() || '5';
+    const roomId = `police-report-${reportId}`;
+
+    // 获取用户ID - 使用和emergency-intake.vue相同的逻辑
+    let userId = '';
+    let userName = '';
+
+    if (userStore.employeeId) {
+      userId = userStore.employeeId.toString();
+      userName = userStore.actualName || userStore.userInfo?.actualName || '当前用户';
+    } else if (userStore.userInfo?.userId) {
+      userId = userStore.userInfo.userId.toString();
+      userName = userStore.userInfo.actualName || '当前用户';
+    } else if (userStore.userInfo?.employeeId) {
+      userId = userStore.userInfo.employeeId.toString();
+      userName = userStore.userInfo.actualName || '当前用户';
+    } else {
+      // 从localStorage获取
+      try {
+        const storedUser = localStorage.getItem('userInfo') || localStorage.getItem('LOGIN_USER_DATA') || localStorage.getItem('user-token');
+        if (storedUser) {
+          const user = JSON.parse(storedUser);
+          userId = (user.userId || user.employeeId || user.id || '').toString();
+          userName = user.actualName || user.name || '当前用户';
+        }
+      } catch (e) {
+        console.warn('🔧 [Professional Fields] 无法从localStorage获取用户信息:', e);
+      }
+    }
+
+    if (userId) {
+      const collaborationUser = {
+        id: userId,
+        name: userName,
+        avatar: userStore.userInfo?.avatar,
+        color: generateUserColor(userId)
+      };
+
+      // 减少日志噪音，只在开发模式显示
+      if (process.env.NODE_ENV === 'development') {
+        console.log('🔧 [Professional Fields] onFieldFocus 用户信息:', {
+          fieldName,
+          userId,
+          userName,
+          collaborationUser
+        });
+      }
+
+      fieldCollaborationManager.onFieldFocus(roomId, fieldName, collaborationUser);
+
+      // 发送WebSocket编辑状态
+      if (syncManager) {
+        try {
+          syncManager.syncFieldEditState(parseInt(reportId), fieldName, 'FIELD_FOCUS');
+        } catch (error) {
+          console.warn('🔧 [Professional Fields] syncManager.syncFieldEditState 调用失败:', error);
+        }
+      } else {
+        console.warn('🔧 [Professional Fields] syncManager 未找到，无法同步字段编辑状态');
+      }
+    } else {
+      console.warn('🔧 [Professional Fields] 用户ID为空，无法进行协作:', { userStore: userStore, userInfo: userStore.userInfo });
+    }
+  }
+
+  // 字段失焦事件处理
+  function onFieldBlur(fieldName: string) {
+    const reportId = route.query.reportId?.toString() || '5';
+    const roomId = `police-report-${reportId}`;
+
+    // 获取用户ID - 使用和emergency-intake.vue相同的逻辑
+    let userId = '';
+    let userName = '';
+
+    if (userStore.employeeId) {
+      userId = userStore.employeeId.toString();
+      userName = userStore.actualName || userStore.userInfo?.actualName || '当前用户';
+    } else if (userStore.userInfo?.userId) {
+      userId = userStore.userInfo.userId.toString();
+      userName = userStore.userInfo.actualName || '当前用户';
+    } else if (userStore.userInfo?.employeeId) {
+      userId = userStore.userInfo.employeeId.toString();
+      userName = userStore.userInfo.actualName || '当前用户';
+    } else {
+      // 从localStorage获取
+      try {
+        const storedUser = localStorage.getItem('userInfo') || localStorage.getItem('LOGIN_USER_DATA') || localStorage.getItem('user-token');
+        if (storedUser) {
+          const user = JSON.parse(storedUser);
+          userId = (user.userId || user.employeeId || user.id || '').toString();
+          userName = user.actualName || user.name || '当前用户';
+        }
+      } catch (e) {
+        console.warn('🔧 [Professional Fields] 无法从localStorage获取用户信息:', e);
+      }
+    }
+
+    if (userId) {
+      const collaborationUser = {
+        id: userId,
+        name: userName,
+        avatar: userStore.userInfo?.avatar,
+        color: generateUserColor(userId)
+      };
+
+      fieldCollaborationManager.onFieldBlur(roomId, fieldName, collaborationUser);
+
+      // 发送WebSocket编辑状态
+      if (syncManager) {
+        try {
+          syncManager.syncFieldEditState(parseInt(reportId), fieldName, 'FIELD_BLUR');
+        } catch (error) {
+          console.warn('🔧 [Professional Fields] syncManager.syncFieldEditState 调用失败:', error);
+        }
+      }
+    }
+  }
+
+  // 字段编辑事件处理
+  function onFieldEdit(fieldName: string, content?: string) {
+    console.log('🎯 [Professional Fields] onFieldEdit 被调用:', {
+      fieldName,
+      content,
+      userId: getCurrentUserId(),
+      userName: getCurrentUserName()
+    });
+    const reportId = route.query.reportId?.toString() || '5';
+    const roomId = `police-report-${reportId}`;
+
+    // 获取用户ID - 使用和emergency-intake.vue相同的逻辑
+    let userId = '';
+    let userName = '';
+
+    if (userStore.employeeId) {
+      userId = userStore.employeeId.toString();
+      userName = userStore.actualName || userStore.userInfo?.actualName || '当前用户';
+    } else if (userStore.userInfo?.userId) {
+      userId = userStore.userInfo.userId.toString();
+      userName = userStore.userInfo.actualName || '当前用户';
+    } else if (userStore.userInfo?.employeeId) {
+      userId = userStore.userInfo.employeeId.toString();
+      userName = userStore.userInfo.actualName || '当前用户';
+    } else {
+      // 从localStorage获取
+      try {
+        const storedUser = localStorage.getItem('userInfo') || localStorage.getItem('LOGIN_USER_DATA') || localStorage.getItem('user-token');
+        if (storedUser) {
+          const user = JSON.parse(storedUser);
+          userId = (user.userId || user.employeeId || user.id || '').toString();
+          userName = user.actualName || user.name || '当前用户';
+        }
+      } catch (e) {
+        console.warn('🔧 [Professional Fields] 无法从localStorage获取用户信息:', e);
+      }
+    }
+
+    if (userId) {
+      const collaborationUser = {
+        id: userId,
+        name: userName,
+        avatar: userStore.userInfo?.avatar,
+        color: generateUserColor(userId)
+      };
+
+      fieldCollaborationManager.onFieldEdit(roomId, fieldName, collaborationUser, content);
+
+      // 发送WebSocket编辑状态
+      if (syncManager) {
+        try {
+          syncManager.syncFieldEditState(parseInt(reportId), fieldName, 'FIELD_EDIT');
+        } catch (error) {
+          console.warn('🔧 [Professional Fields] syncManager.syncFieldEditState 调用失败:', error);
+        }
+      }
+    }
+  }
+
+  // 生成用户颜色
+  function generateUserColor(userId: string): string {
+    const colors = [
+      '#1890ff', '#52c41a', '#faad14', '#f5222d',
+      '#722ed1', '#13c2c2', '#eb2f96', '#fa8c16'
+    ];
+    let hash = 0;
+    for (let i = 0; i < userId.length; i++) {
+      hash = userId.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    return colors[Math.abs(hash) % colors.length];
+  }
+
+  // 获取当前用户ID的辅助函数
+  function getCurrentUserId(): string {
+    if (userStore.employeeId) {
+      return userStore.employeeId.toString();
+    } else if (userStore.userInfo?.userId) {
+      return userStore.userInfo.userId.toString();
+    } else if (userStore.userInfo?.employeeId) {
+      return userStore.userInfo.employeeId.toString();
+    }
+    return '';
+  }
+
+  // 获取当前用户名的辅助函数
+  function getCurrentUserName(): string {
+    return userStore.actualName || userStore.userInfo?.actualName || '当前用户';
+  }
 
   // 字段属性访问辅助函数 - 兼容两种格式
   function getFieldKey(field: UnifiedField): string {
@@ -316,12 +677,18 @@
     }
 
     updateFieldImmediate(fieldKey, newValue);
+
+    // 触发协作编辑事件 - 对于字典多选点击，传递AUTO_UNLOCK标记自动解锁
+    onFieldEdit(fieldKey, 'AUTO_UNLOCK');
   }
 
   // 更新字段值 - 添加防抖优化性能
   const updateField = debounce((fieldKey: string, value: any) => {
     if (props.disabled) return;
     emit('update:modelValue', { ...props.modelValue, [fieldKey]: value });
+
+    // 触发协作编辑事件 - 对于按钮点击更新，使用AUTO_UNLOCK标记
+    onFieldEdit(fieldKey, 'AUTO_UNLOCK');
   }, 50); // 50ms防抖
 
   // 立即更新字段值（用于按钮点击等需要即时响应的场景）
@@ -343,9 +710,49 @@
     };
   }
 
+  // 调试按钮点击事件（生产环境可移除）
+  function debugButtonClick(type: string, fieldKey: string, option?: any) {
+    if (process.env.NODE_ENV === 'development') {
+      const fieldState = getFieldState(fieldKey);
+      console.log(`🎯 [Professional Fields] ${type} 按钮点击:`, {
+        type,
+        fieldKey,
+        option,
+        disabled: props.disabled,
+        isFieldLockedByOther: isFieldLockedByOther(fieldKey),
+        fieldState: fieldState,
+        buttonShouldBeDisabled: props.disabled || isFieldLockedByOther(fieldKey),
+        timestamp: Date.now()
+      });
+    }
+  }
+
+  // 调试按钮状态
+  function debugButtonState(type: string, fieldKey: string, option?: any) {
+    const isDisabled = props.disabled || isFieldLockedByOther(fieldKey);
+    console.log(`🔍 [Professional Fields] ${type} 按钮状态:`, {
+      type,
+      fieldKey,
+      option,
+      'props.disabled': props.disabled,
+      'isFieldLockedByOther': isFieldLockedByOther(fieldKey),
+      'finalDisabled': isDisabled,
+      'fieldState': getFieldState(fieldKey),
+      timestamp: Date.now()
+    });
+    return !isDisabled;
+  }
+
   // 选择选项
   function selectOption(fieldKey: string, option: string) {
+    debugButtonClick('selectOption', fieldKey, option);
     if (props.disabled) return;
+
+    console.log('🎯 [Professional Fields] selectOption 被调用:', {
+      fieldKey,
+      option,
+      disabled: props.disabled
+    });
 
     if (option === '无' || option === '0') {
       updateFieldImmediate(fieldKey, 0);
@@ -353,6 +760,9 @@
       const num = extractNumber(option);
       updateFieldImmediate(fieldKey, num !== null ? num : option);
     }
+
+    // 触发协作编辑事件 - 对于按钮点击，传递AUTO_UNLOCK标记自动解锁
+    onFieldEdit(fieldKey, 'AUTO_UNLOCK');
   }
 
   // 判断选项是否被选中
@@ -375,6 +785,12 @@
   function toggleCheckbox(fieldKey: string, option: string) {
     if (props.disabled) return;
 
+    console.log('🎯 [Professional Fields] toggleCheckbox 被调用:', {
+      fieldKey,
+      option,
+      disabled: props.disabled
+    });
+
     let currentValue = props.modelValue[fieldKey];
     if (!currentValue) {
       currentValue = [];
@@ -392,6 +808,9 @@
     }
 
     updateFieldImmediate(fieldKey, newValue);
+
+    // 触发协作编辑事件 - 对于多选点击，传递AUTO_UNLOCK标记自动解锁
+    onFieldEdit(fieldKey, 'AUTO_UNLOCK');
   }
 
   // 提取数字
@@ -399,6 +818,15 @@
     const match = text.match(/(\d+)/);
     return match ? parseInt(match[1]) : null;
   }
+
+  // 组件挂载时的调试（生产环境可移除）
+  onMounted(() => {
+    if (process.env.NODE_ENV === 'development') {
+      console.log('🏗️ [Professional Fields] 组件已挂载');
+      console.log('🏗️ [Professional Fields] props.disabled:', props.disabled);
+      console.log('🏗️ [Professional Fields] props.fields长度:', props.fields.length);
+    }
+  });
 </script>
 
 <style scoped lang="scss">
@@ -437,6 +865,7 @@
   border: 1px solid rgba(229, 231, 235, 0.6);
   margin-bottom: 8px;
   transition: all 0.2s ease;
+  position: relative; /* 为协作指示器提供定位基准 */
 }
 
 .pro-field:hover {
@@ -723,5 +1152,129 @@
 .compact-select-wrapper {
   flex: 1;
   min-width: 120px;
+}
+
+/* 字段协作锁定样式 */
+.field-input-wrapper {
+  position: relative;
+}
+
+/* 被其他用户锁定的字段 */
+.field-input-wrapper.locked-by-other {
+  opacity: 0.7;
+}
+
+.field-input-wrapper.locked-by-other .preview-input-field,
+.field-input-wrapper.locked-by-other .preview-textarea-field,
+.field-input-wrapper.locked-by-other input,
+.field-input-wrapper.locked-by-other textarea {
+  background-color: #fff2e8 !important;
+  border-color: #ffad99 !important;
+  color: #8c4a1a !important;
+  cursor: not-allowed;
+}
+
+.field-input-wrapper.locked-by-other .preview-input-field:hover,
+.field-input-wrapper.locked-by-other .preview-input-field:focus,
+.field-input-wrapper.locked-by-other .preview-textarea-field:hover,
+.field-input-wrapper.locked-by-other .preview-textarea-field:focus,
+.field-input-wrapper.locked-by-other input:hover,
+.field-input-wrapper.locked-by-other input:focus,
+.field-input-wrapper.locked-by-other textarea:hover,
+.field-input-wrapper.locked-by-other textarea:focus {
+  border-color: #ff7a45 !important;
+  box-shadow: 0 0 0 2px rgba(255, 122, 69, 0.2) !important;
+}
+
+/* 字段锁定遮罩层 */
+.field-lock-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(255, 122, 69, 0.1);
+  border: 2px solid rgba(255, 122, 69, 0.3);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.lock-icon {
+  font-size: 12px;
+  margin-right: 4px;
+}
+
+.lock-text {
+  font-size: 11px;
+  color: #d46b08;
+  font-weight: 500;
+  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.8);
+}
+
+/* 被锁定容器中的按钮样式 */
+.locked-by-other .select-btn:disabled,
+.locked-by-other .checkbox-btn:disabled,
+.locked-by-other .quick-btn:disabled,
+.locked-by-other .compact-checkbox-btn:disabled,
+.locked-by-other .compact-btn:disabled {
+  background-color: #fff2e8 !important;
+  border-color: #ffad99 !important;
+  color: #8c4a1a !important;
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+/* 被锁定但已选中的按钮样式 - 保持高对比度显示 */
+.locked-by-other .select-btn.selected:disabled,
+.locked-by-other .checkbox-btn.selected:disabled,
+.locked-by-other .quick-btn.selected:disabled,
+.locked-by-other .compact-checkbox-btn.selected:disabled,
+.locked-by-other .compact-btn.selected:disabled {
+  background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%) !important;
+  border-color: #ff6b35 !important;
+  color: #ffffff !important;
+  opacity: 0.9 !important;
+  font-weight: 600;
+  box-shadow:
+    0 4px 12px rgba(255, 107, 53, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
+  transform: none;
+}
+
+/* 被锁定选中按钮的特殊标识 */
+.locked-by-other .select-btn.selected:disabled::after,
+.locked-by-other .checkbox-btn.selected:disabled::after,
+.locked-by-other .quick-btn.selected:disabled::after,
+.locked-by-other .compact-checkbox-btn.selected:disabled::after,
+.locked-by-other .compact-btn.selected:disabled::after {
+  content: ' ✓';
+  font-weight: bold;
+  color: #ffffff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.locked-by-other .select-options,
+.locked-by-other .checkbox-options,
+.locked-by-other .quick-options,
+.locked-by-other .checkbox-compact {
+  position: relative;
+}
+
+/* 确保遮罩层在按钮组上方 */
+.select-wrapper.locked-by-other .field-lock-overlay,
+.checkbox-wrapper.locked-by-other .field-lock-overlay,
+.quick-options.locked-by-other .field-lock-overlay,
+.checkbox-compact.locked-by-other .field-lock-overlay {
+  z-index: 15;
+}
+
+/* 调试样式：显示锁定状态 */
+.debug-locked {
+  border: 2px dashed orange !important;
+  background-color: rgba(255, 165, 0, 0.1) !important;
 }
 </style>
