@@ -372,6 +372,7 @@
   import { EnhancedConflictResolver } from '/@/utils/enhanced-conflict-resolver';
   import { createOfflineSyncQueue } from '/@/utils/offline-sync-queue';
   import { fieldCollaborationManager } from '/@/utils/field-collaboration-manager';
+  import { simpleFieldLockManager } from '/@/utils/simple-field-lock-manager';
   import { createEnhancedOfflineManager, Priority } from '/@/utils/enhanced-offline-manager';
   import { realOperationHistoryManager, recordFieldChange, RealOperationType, createRealOperationHistoryManager } from '/@/utils/real-operation-history';
   import type { EnhancedConflictInfo } from '/@/utils/enhanced-conflict-resolver';
@@ -580,6 +581,14 @@
             // FIELD_EDIT 通过 syncFieldUpdate 处理
             console.log('🔧 [syncManager] FIELD_EDIT 事件通过 syncFieldUpdate 处理');
             break;
+          case 'FIELD_LOCK':
+            policeWebSocketService.sendFieldFocus(fieldName);
+            console.log('🔧 [syncManager] FIELD_LOCK 事件已同步');
+            break;
+          case 'FIELD_UNLOCK':
+            policeWebSocketService.sendFieldBlur(fieldName);
+            console.log('🔧 [syncManager] FIELD_UNLOCK 事件已同步');
+            break;
           default:
             console.warn('🔧 [syncManager] 未知的字段编辑状态事件类型:', eventType);
         }
@@ -610,6 +619,64 @@
     'remark': '备注信息',
     // 专业字段会在动态表单配置加载后添加
   });
+
+  // 检查字段是否为有效的专业字段
+  function isValidProfessionalField(fieldName: string): boolean {
+    if (!fieldName) return false;
+
+    // 排除明确属于基础表单的字段
+    const excludedFields = [
+      'reportType', 'reportTime', 'location', 'description',
+      'reporterId', 'reporterName', 'reporterPhone', 'priority',
+      'status', 'id', 'createdTime', 'updatedTime'
+    ];
+
+    if (excludedFields.includes(fieldName)) {
+      console.log('🚫 [isValidProfessionalField] 排除基础字段:', fieldName);
+      return false;
+    }
+
+    // 如果字段已存在于professionalFieldData中，认为是有效的专业字段
+    const existsInData = professionalFieldData.hasOwnProperty(fieldName);
+    if (existsInData) {
+      console.log('✅ [isValidProfessionalField] 字段存在于数据中:', fieldName);
+      return true;
+    }
+
+    // 如果有动态配置，检查是否在配置中
+    if (dynamicFormConfig.value) {
+      const allFields = [
+        ...(dynamicFormConfig.value.step2Fields || []),
+        ...(dynamicFormConfig.value.step3Fields || [])
+      ];
+
+      const isInConfig = allFields.some(field =>
+        field.key === fieldName ||
+        field.fieldName === fieldName ||
+        (field as any).name === fieldName ||
+        field.id === fieldName
+      );
+
+      if (isInConfig) {
+        console.log('✅ [isValidProfessionalField] 字段存在于配置中:', fieldName);
+        return true;
+      }
+    }
+
+    // 对于用户自定义字段，采用更宽松的策略：
+    // 如果不是明确的基础字段，且不以特殊前缀开头，就认为可能是专业字段
+    const isLikelyProfessionalField = !fieldName.startsWith('_') && !fieldName.startsWith('sys_');
+
+    console.log('🔍 [isValidProfessionalField] 检查结果:', {
+      fieldName,
+      existsInData,
+      hasConfig: !!dynamicFormConfig.value,
+      isLikelyProfessional: isLikelyProfessionalField,
+      finalResult: isLikelyProfessionalField
+    });
+
+    return isLikelyProfessionalField;
+  }
 
   // 计算属性 - 只依赖reportType和config，不依赖整个formData
   const professionalFields = computed(() => {
@@ -1658,6 +1725,19 @@
       configLoading.value = false;
       // 更新字段标签映射
       updateFieldLabelMapping();
+
+      // 如果是同步调用（其他用户切换类型导致的）且在编辑模式，重新加载专业字段数据
+      if (fromSync && isEditMode.value && editReportId.value) {
+        console.log('🔄 [Form Config] 同步调用完成，重新加载专业字段数据以同步值');
+        nextTick(async () => {
+          try {
+            await loadProfessionalFieldData(editReportId.value);
+            console.log('✅ [Form Config] 成功重新加载专业字段数据');
+          } catch (error) {
+            console.error('❌ [Form Config] 重新加载专业字段数据失败:', error);
+          }
+        });
+      }
     }
   }
 
@@ -2179,8 +2259,8 @@
                 loadFormConfig(data.value.reportType, true, true);
               }
             }
-            // 处理专业字段更新
-            else if (data.fieldName && data.fieldName.startsWith('field_')) {
+            // 处理专业字段更新（支持所有专业字段，包括自定义字段名）
+            else if (data.fieldName && (data.fieldName.startsWith('field_') || isValidProfessionalField(data.fieldName))) {
               const oldValue = professionalFieldData[data.fieldName];
               console.log('📝 [WebSocket专业字段] 准备更新:', {
                 fieldName: data.fieldName,
@@ -2244,6 +2324,17 @@
               timestamp: data.timestamp
             });
 
+            // 同时更新SimpleFieldLockManager状态 (将聚焦事件映射为锁定事件)
+            try {
+              simpleFieldLockManager.handleRemoteLockEvent(roomId, data.fieldName, 'FIELD_LOCK', {
+                id: data.userId.toString(),
+                name: data.userName,
+                color: generateUserColor(data.userId.toString())
+              });
+            } catch (error) {
+              console.error('❌ [Field Focus] 更新SimpleFieldLockManager失败:', error);
+            }
+
             // 验证字段状态是否正确更新
             const fieldState = fieldCollaborationManager.getFieldState(roomId, data.fieldName);
             console.log('🔧 [Field Focus] 字段状态更新后:', {
@@ -2301,6 +2392,13 @@
               },
               timestamp: data.timestamp
             });
+
+            // 同时更新SimpleFieldLockManager状态 (将失焦事件映射为解锁事件)
+            try {
+              simpleFieldLockManager.handleRemoteLockEvent(roomId, data.fieldName, 'FIELD_UNLOCK');
+            } catch (error) {
+              console.error('❌ [Field Blur] 更新SimpleFieldLockManager失败:', error);
+            }
 
             // 验证字段状态是否正确更新
             const fieldState = fieldCollaborationManager.getFieldState(roomId, data.fieldName);
