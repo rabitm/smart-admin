@@ -102,53 +102,71 @@
       </div>
     </a-row>
 
-    <a-table
-      :scroll="{ x: 1800 }"
-      size="small"
-      :dataSource="tableData"
-      :columns="columns"
-      rowKey="reportId"
-      :pagination="false"
-      :loading="tableLoading"
-      bordered
+    <!-- 高性能虚拟滚动表格 -->
+    <VirtualScrollTable
+      :data="enhancedTableData"
+      :columns="virtualTableColumns"
+      :container-height="600"
+      :row-height="50"
+      :show-performance-panel="showPerformancePanel"
+      :highlight-updates="true"
+      @row-click="handleRowClick"
+      @row-double-click="handleRowDoubleClick"
+      @sort="handleSort"
+      ref="virtualTableRef"
     >
-      <template #bodyCell="{ column, record, text }">
-        <template v-if="column.dataIndex === 'reportNumber'">
-          <a-button type="link" @click="detail(record.reportId)" :disabled="!$privilege('oa:police:query')">
-            {{ record.reportNumber }}
-          </a-button>
-        </template>
-
-        <template v-if="column.dataIndex === 'handleSeatCode'">
-          <a-tag v-if="record.handleSeatCode" color="blue">
-            {{ record.handleSeatCode }}
-          </a-tag>
-          <span v-else class="text-gray">-</span>
-        </template>
-        <template v-if="column.dataIndex === 'reportType'">
-          <span>{{ $smartEnumPlugin.getDescByValue('POLICE_REPORT_TYPE_ENUM', text) }}</span>
-        </template>
-        <template v-if="column.dataIndex === 'reportLevel'">
-          <a-tag :color="getLevelColor(text)">
-            {{ $smartEnumPlugin.getDescByValue('POLICE_REPORT_LEVEL_ENUM', text) }}
-          </a-tag>
-        </template>
-        <template v-if="column.dataIndex === 'status'">
-          <a-tag :color="getStatusColor(text)">
-            {{ $smartEnumPlugin.getDescByValue('POLICE_REPORT_STATUS_ENUM', text) }}
-          </a-tag>
-        </template>
-        <template v-if="column.dataIndex === 'description'">
-          <span class="text-ellipsis" :title="text">{{ text }}</span>
-        </template>
-        <template v-if="column.dataIndex === 'action'">
-          <div class="smart-table-operate">
-            <a-button @click="update(record.reportId)" size="small" v-privilege="'oa:police:update'" type="link">编辑</a-button>
-            <a-button @click="confirmDelete(record.reportId)" size="small" danger v-privilege="'oa:police:delete'" type="link">删除</a-button>
-          </div>
-        </template>
+      <!-- 警情编号列 -->
+      <template #reportNumber="{ record }">
+        <a-button
+          type="link"
+          size="small"
+          @click="detail(record.reportId)"
+          :disabled="!$privilege('oa:police:query')"
+        >
+          {{ record.reportNumber }}
+        </a-button>
       </template>
-    </a-table>
+
+      <!-- 处理席位列 -->
+      <template #handleSeatCode="{ record }">
+        <a-tag v-if="record.handleSeatCode" color="blue">
+          {{ record.handleSeatCode }}
+        </a-tag>
+        <span v-else class="text-gray">-</span>
+      </template>
+
+      <!-- 警情类型列 -->
+      <template #reportType="{ record }">
+        <span>{{ $smartEnumPlugin.getDescByValue('POLICE_REPORT_TYPE_ENUM', record.reportType) }}</span>
+      </template>
+
+      <!-- 警情等级列 -->
+      <template #reportLevel="{ record }">
+        <a-tag :color="getLevelColor(record.reportLevel)">
+          {{ $smartEnumPlugin.getDescByValue('POLICE_REPORT_LEVEL_ENUM', record.reportLevel) }}
+        </a-tag>
+      </template>
+
+      <!-- 处理状态列 -->
+      <template #status="{ record }">
+        <a-tag :color="getStatusColor(record.status)">
+          {{ $smartEnumPlugin.getDescByValue('POLICE_REPORT_STATUS_ENUM', record.status) }}
+        </a-tag>
+      </template>
+
+      <!-- 警情描述列 -->
+      <template #description="{ record }">
+        <span class="text-ellipsis" :title="record.description">{{ record.description }}</span>
+      </template>
+
+      <!-- 操作列 -->
+      <template #action="{ record }">
+        <div class="smart-table-operate">
+          <a-button @click="update(record.reportId)" size="small" v-privilege="'oa:police:update'" type="link">编辑</a-button>
+          <a-button @click="confirmDelete(record.reportId)" size="small" danger v-privilege="'oa:police:delete'" type="link">删除</a-button>
+        </div>
+      </template>
+    </VirtualScrollTable>
 
     <div class="smart-query-table-page">
       <a-pagination
@@ -170,7 +188,7 @@
 </template>
 
 <script setup lang="ts">
-  import { reactive, ref, onMounted, onUnmounted } from 'vue';
+  import { reactive, ref, computed, onMounted, onUnmounted } from 'vue';
   import { message, Modal } from 'ant-design-vue';
   import { SmartLoading } from '/@/components/framework/smart-loading';
   import { policeReportApi } from '/@/api/business/oa/police-report-api';
@@ -187,6 +205,9 @@
     POLICE_REPORT_STATUS_ENUM
   } from '/@/constants/business/oa/police-report-const';
   import { getWebSocketClient } from '/@/utils/websocket-manager';
+  import VirtualScrollTable from '/@/components/business/police/virtual-scroll-table.vue';
+  import { policeListUpdateManager } from '/@/utils/police-list-update-manager';
+  import type { PoliceReportData } from '/@/utils/police-list-update-manager';
 
   // --------------------------- 警情录入表格 列 ---------------------------
 
@@ -297,6 +318,122 @@
   const tableData = ref([]);
   const total = ref(0);
 
+  // 高性能虚拟表格相关
+  const virtualTableRef = ref();
+  const showPerformancePanel = ref(true);
+
+  // 虚拟表格列配置
+  const virtualTableColumns = computed(() => [
+    {
+      key: 'reportNumber',
+      title: '警情编号',
+      width: 150,
+      sortable: true,
+      slot: 'reportNumber'
+    },
+    {
+      key: 'reportType',
+      title: '警情类型',
+      width: 100,
+      sortable: true,
+      slot: 'reportType'
+    },
+    {
+      key: 'reportLevel',
+      title: '警情等级',
+      width: 80,
+      sortable: true,
+      slot: 'reportLevel'
+    },
+    {
+      key: 'reporterName',
+      title: '报警人姓名',
+      width: 100,
+      sortable: true
+    },
+    {
+      key: 'reporterPhone',
+      title: '报警人电话',
+      width: 120
+    },
+    {
+      key: 'reportTime',
+      title: '报警时间',
+      width: 150,
+      sortable: true
+    },
+    {
+      key: 'handleSeatCode',
+      title: '处理席位',
+      width: 100,
+      slot: 'handleSeatCode'
+    },
+    {
+      key: 'handlerName',
+      title: '处理人员',
+      width: 100
+    },
+    {
+      key: 'incidentLocation',
+      title: '事发地点',
+      width: 200
+    },
+    {
+      key: 'description',
+      title: '警情描述',
+      width: 200,
+      slot: 'description'
+    },
+    {
+      key: 'status',
+      title: '处理状态',
+      width: 90,
+      sortable: true,
+      slot: 'status'
+    },
+    {
+      key: 'createUserName',
+      title: '创建人',
+      width: 100
+    },
+    {
+      key: 'createTime',
+      title: '创建时间',
+      width: 150,
+      sortable: true
+    },
+    {
+      key: 'action',
+      title: '操作',
+      width: 120,
+      slot: 'action'
+    }
+  ]);
+
+  // 增强的表格数据（转换为高性能格式）
+  const enhancedTableData = computed(() => {
+    return tableData.value.map((item: any) => ({
+      id: item.reportId,
+      reportId: item.reportId,
+      reportNumber: item.reportNumber,
+      reportType: item.reportType,
+      reportLevel: item.reportLevel,
+      status: item.status,
+      reporterName: item.reporterName,
+      reporterPhone: item.reporterPhone,
+      incidentLocation: item.incidentLocation,
+      description: item.description,
+      reportTime: item.reportTime,
+      handlerName: item.handlerName,
+      handleSeatCode: item.handleSeatCode,
+      createUserName: item.createUserName,
+      createTime: item.createTime,
+      updatedAt: Date.now(),
+      version: 1,
+      updateFields: new Set<string>()
+    }));
+  });
+
   // 日期选择
   let reportTimeRange = ref();
   let createTimeRange = ref();
@@ -405,148 +542,221 @@
     return colorMap[level] || 'default';
   }
 
-  // --------------------------- WebSocket实时同步 ---------------------------
+  // --------------------------- 高性能虚拟表格事件处理 ---------------------------
+
+  // 虚拟表格事件处理
+  const handleRowClick = (row: PoliceReportData) => {
+    console.log('🖱️ [VirtualTable] 行点击:', row.reportNumber);
+  };
+
+  const handleRowDoubleClick = (row: PoliceReportData) => {
+    console.log('🖱️ [VirtualTable] 行双击，进入编辑:', row.reportNumber);
+    update(row.reportId);
+  };
+
+  const handleSort = (field: string, order: string) => {
+    console.log('🔄 [VirtualTable] 排序:', field, order);
+    // 在这里实现排序逻辑
+    tableData.value.sort((a: any, b: any) => {
+      const aVal = a[field];
+      const bVal = b[field];
+
+      if (order === 'ascend') {
+        return aVal > bVal ? 1 : -1;
+      } else {
+        return aVal < bVal ? 1 : -1;
+      }
+    });
+  };
+
+  // --------------------------- WebSocket高性能实时同步 ---------------------------
 
   let wsClient: any = null;
 
-  // 处理警情更新消息
-  function handlePoliceCaseUpdate(message: SeatSyncMessage) {
-    if (message.type === 'POLICE_CASE_UPDATE' && message.data) {
-      console.log('收到警情更新消息:', message);
+  // 初始化高性能列表更新管理器
+  const initializeListUpdateManager = () => {
+    // 设置WebSocket事件监听
+    policeListUpdateManager.on('list_update', (data: any) => {
+      console.log('📋 [高性能列表] 收到列表更新:', data);
 
-      // 查找列表中的对应项并更新
-      const reportList = tableData.value;
-      const index = reportList.findIndex((item: any) => item.reportId === message.policeCaseId);
-
-      if (index >= 0) {
-        // 更新列表中的数据
-        Object.assign(reportList[index], message.data);
-        console.log('已更新列表中的警情数据:', reportList[index]);
-
-        // 显示更新提示
-        const reportNumber = reportList[index].reportNumber || `#${message.policeCaseId}`;
-        message.success(`警情「${reportNumber}」已被其他用户更新`);
-
-        // 添加更新高亮效果
-        highlightTableRow(message.policeCaseId);
-      } else {
-        // 如果是新增的警情，重新加载列表
-        console.log('收到新增警情，刷新列表');
-        ajaxQuery();
-        message.info('列表已更新，有新的警情记录');
+      // 处理实时更新
+      if (data.type === 'FIELD_UPDATE') {
+        handleHighPerformanceFieldUpdate(data);
+      } else if (data.type === 'RECORD_INSERT') {
+        handleHighPerformanceRecordInsert(data);
+      } else if (data.type === 'RECORD_DELETE') {
+        handleHighPerformanceRecordDelete(data);
       }
-    }
-  }
+    });
 
-  // 处理字段实时同步消息
-  function handleFieldSync(message: SeatSyncMessage) {
-    if (message.type === 'POLICE_CASE_FIELD_SYNC' && message.data) {
-      console.log('收到字段同步消息:', message);
+    policeListUpdateManager.on('batch_update', (data: any) => {
+      console.log('📦 [高性能列表] 收到批量更新:', data);
+      handleHighPerformanceBatchUpdate(data);
+    });
 
-      const { fieldName, fieldValue } = message.data;
-      const reportList = tableData.value;
-      const index = reportList.findIndex((item: any) => item.reportId === message.policeCaseId);
+    console.log('🚀 [高性能列表] 更新管理器初始化完成');
+  };
 
-      if (index >= 0) {
-        // 更新对应字段
-        reportList[index][fieldName] = fieldValue;
+  // 处理高性能字段更新
+  const handleHighPerformanceFieldUpdate = (data: any) => {
+    const { reportId, fieldName, fieldValue, userName } = data;
 
-        // 字段显示名称映射
-        const fieldDisplayNames = {
-          reportType: '警情类型',
-          reportLevel: '紧急程度',
-          reporterName: '报警人姓名',
-          reporterPhone: '报警人电话',
-          incidentLocation: '事发地点',
-          description: '事件描述',
-          status: '处理状态',
-          handlerName: '处理人',
-          handleResult: '处理结果',
-          remark: '备注'
-        };
+    // 查找目标记录
+    const targetIndex = tableData.value.findIndex((item: any) => item.reportId === reportId);
+    if (targetIndex >= 0) {
+      const targetRecord = tableData.value[targetIndex];
 
-        const displayName = fieldDisplayNames[fieldName] || fieldName;
-        const reportNumber = reportList[index].reportNumber || `#${message.policeCaseId}`;
+      // 更新字段值
+      targetRecord[fieldName] = fieldValue;
+      targetRecord.updatedAt = Date.now();
+      targetRecord.version = (targetRecord.version || 1) + 1;
 
-        // 显示实时编辑提示
-        message.info(`「${reportNumber}」的${displayName}正在被其他用户编辑`, 2);
-
-        // 添加列表行闪烁效果
-        highlightTableRow(message.policeCaseId);
+      // 标记更新的字段
+      if (!targetRecord.updateFields) {
+        targetRecord.updateFields = new Set();
       }
-    }
-  }
+      targetRecord.updateFields.add(fieldName);
 
-  // 高亮表格行
-  function highlightTableRow(reportId: number) {
-    // 添加高亮效果
-    const tableRow = document.querySelector(`[data-row-key="${reportId}"]`);
-    if (tableRow) {
-      tableRow.classList.add('realtime-update-row');
-      setTimeout(() => {
-        tableRow.classList.remove('realtime-update-row');
-      }, 3000);
-    }
-  }
-
-  // 处理列表刷新消息
-  function handleListRefresh(message: SeatSyncMessage) {
-    if (message.type === 'POLICE_LIST_REFRESH') {
-      console.log('收到列表刷新消息:', message);
-
-      // 重新加载列表数据
-      ajaxQuery();
-
-      // 显示操作提示
-      if (message.message) {
-        message.info(message.message);
+      // 显示更新通知（防抖）
+      if (userName && userName !== '当前用户') {
+        const reportNumber = targetRecord.reportNumber || `#${reportId}`;
+        message.info(`${userName} 更新了警情「${reportNumber}」的${getFieldDisplayName(fieldName)}`, 2);
       }
-    }
-  }
 
-  // 处理警情锁定消息
-  function handlePoliceCaseLock(message: SeatSyncMessage) {
-    if (message.type === 'POLICE_CASE_LOCK') {
-      console.log('收到警情锁定消息:', message);
-      message.info(`警情正在被 ${message.message} 编辑中`);
+      console.log(`⚡ [高性能更新] 字段 ${fieldName} 已更新，记录ID: ${reportId}`);
     }
-  }
+  };
 
-  // 处理警情解锁消息
-  function handlePoliceCaseUnlock(message: SeatSyncMessage) {
-    if (message.type === 'POLICE_CASE_UNLOCK') {
-      console.log('收到警情解锁消息:', message);
+  // 处理高性能记录插入
+  const handleHighPerformanceRecordInsert = (data: any) => {
+    const newRecord = {
+      ...data.record,
+      updatedAt: Date.now(),
+      version: 1,
+      updateFields: new Set(['*']) // 标记为全新记录
+    };
+
+    tableData.value.unshift(newRecord);
+    total.value++;
+
+    message.info(`新增警情「${newRecord.reportNumber}」`, 3);
+    console.log('✨ [高性能更新] 新记录已添加:', newRecord.reportNumber);
+  };
+
+  // 处理高性能记录删除
+  const handleHighPerformanceRecordDelete = (data: any) => {
+    const { reportId } = data;
+    const targetIndex = tableData.value.findIndex((item: any) => item.reportId === reportId);
+
+    if (targetIndex >= 0) {
+      const deletedRecord = tableData.value[targetIndex];
+      tableData.value.splice(targetIndex, 1);
+      total.value--;
+
+      message.warning(`警情「${deletedRecord.reportNumber}」已被删除`);
+      console.log('🗑️ [高性能更新] 记录已删除:', deletedRecord.reportNumber);
     }
-  }
+  };
+
+  // 处理高性能批量更新
+  const handleHighPerformanceBatchUpdate = (data: any) => {
+    const { updates } = data;
+    let updateCount = 0;
+
+    updates.forEach((update: any) => {
+      const { reportId, fieldName, fieldValue } = update;
+      const targetIndex = tableData.value.findIndex((item: any) => item.reportId === reportId);
+
+      if (targetIndex >= 0) {
+        const targetRecord = tableData.value[targetIndex];
+        targetRecord[fieldName] = fieldValue;
+        targetRecord.updatedAt = Date.now();
+        targetRecord.version++;
+
+        if (!targetRecord.updateFields) {
+          targetRecord.updateFields = new Set();
+        }
+        targetRecord.updateFields.add(fieldName);
+        updateCount++;
+      }
+    });
+
+    if (updateCount > 0) {
+      message.info(`批量更新了 ${updateCount} 条记录`, 2);
+      console.log(`📦 [高性能批量更新] 已处理 ${updateCount} 条更新`);
+    }
+  };
+
+  // 字段显示名称映射
+  const getFieldDisplayName = (fieldName: string): string => {
+    const fieldDisplayNames: Record<string, string> = {
+      reportType: '警情类型',
+      reportLevel: '紧急程度',
+      reporterName: '报警人姓名',
+      reporterPhone: '报警人电话',
+      incidentLocation: '事发地点',
+      description: '事件描述',
+      status: '处理状态',
+      handlerName: '处理人',
+      handleResult: '处理结果',
+      remark: '备注'
+    };
+    return fieldDisplayNames[fieldName] || fieldName;
+  };
 
   onMounted(() => {
     ajaxQuery();
 
-    // 初始化WebSocket监听
+    // 初始化高性能列表更新管理器
     try {
-      wsClient = getWebSocketClient();
-      wsClient.on('POLICE_CASE_UPDATE', handlePoliceCaseUpdate);
-      wsClient.on('POLICE_CASE_FIELD_SYNC', handleFieldSync);
-      wsClient.on('POLICE_LIST_REFRESH', handleListRefresh);
-      wsClient.on('POLICE_CASE_LOCK', handlePoliceCaseLock);
-      wsClient.on('POLICE_CASE_UNLOCK', handlePoliceCaseUnlock);
-      console.log('警情列表页面WebSocket监听已启动');
+      initializeListUpdateManager();
+      console.log('🚀 [警情列表] 高性能更新系统已启动');
     } catch (error) {
-      console.error('启动WebSocket监听失败:', error);
+      console.error('❌ [警情列表] 启动高性能更新系统失败:', error);
+      // 降级到传统WebSocket监听
+      fallbackToLegacyWebSocket();
     }
   });
 
   onUnmounted(() => {
-    // 清理WebSocket监听
+    // 清理高性能列表更新管理器
+    try {
+      policeListUpdateManager.destroy();
+      console.log('🔥 [警情列表] 高性能更新系统已清理');
+    } catch (error) {
+      console.error('清理高性能更新系统失败:', error);
+    }
+
+    // 清理传统WebSocket监听（如果有）
     if (wsClient) {
-      wsClient.off('POLICE_CASE_UPDATE', handlePoliceCaseUpdate);
-      wsClient.off('POLICE_CASE_FIELD_SYNC', handleFieldSync);
-      wsClient.off('POLICE_LIST_REFRESH', handleListRefresh);
-      wsClient.off('POLICE_CASE_LOCK', handlePoliceCaseLock);
-      wsClient.off('POLICE_CASE_UNLOCK', handlePoliceCaseUnlock);
-      console.log('警情列表页面WebSocket监听已清理');
+      wsClient.off('POLICE_CASE_UPDATE');
+      wsClient.off('POLICE_CASE_FIELD_SYNC');
+      wsClient.off('POLICE_LIST_REFRESH');
+      console.log('🔥 [警情列表] 传统WebSocket监听已清理');
     }
   });
+
+  // 降级到传统WebSocket监听（兼容性保障）
+  const fallbackToLegacyWebSocket = () => {
+    try {
+      wsClient = getWebSocketClient();
+      wsClient.on('POLICE_CASE_UPDATE', (data: any) => {
+        console.log('📡 [Legacy WebSocket] 收到更新:', data);
+        // 转换为高性能格式处理
+        if (data.type === 'POLICE_CASE_UPDATE') {
+          handleHighPerformanceFieldUpdate({
+            reportId: data.policeCaseId,
+            fieldName: 'status', // 假设是状态更新
+            fieldValue: data.data,
+            userName: data.userName || '其他用户'
+          });
+        }
+      });
+      console.log('⚠️ [警情列表] 已降级到传统WebSocket模式');
+    } catch (error) {
+      console.error('❌ [警情列表] 传统WebSocket初始化也失败:', error);
+    }
+  };
 </script>
 
 <style scoped>

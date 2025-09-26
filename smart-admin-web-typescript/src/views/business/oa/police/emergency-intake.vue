@@ -12,27 +12,48 @@
       <div class="title-section">
         <h1 class="page-title">
           🚨 {{ isEditMode ? '编辑警情' : '智能接警系统' }}
-          <!-- 协作状态信息 - 只显示其他用户，不包括自己 -->
-          <span v-if="otherCollaborationUsers.length > 0" class="collaboration-status">
+          <!-- 🔄 重构协作状态显示 - 实时显示协作者数量 -->
+          <span v-if="collaboratorCount > 0" class="collaboration-status">
             <span class="collab-icon">👥</span>
-            <span class="collab-count">{{ otherCollaborationUsers.length }}人协作中</span>
+            <span class="collab-count">{{ collaboratorCount }}人协作中</span>
           </span>
         </h1>
         <div class="status-info">
           <span class="current-time">{{ currentTime }}</span>
           <span class="operator-info">接警员：{{ operatorName }}</span>
-          <!-- 协作用户列表 - 只显示其他用户 -->
-          <div v-if="otherCollaborationUsers.length > 0" class="collab-users">
+          <!-- 🎭 重构后的协作用户头像展示 - 优化显示逻辑 -->
+          <div v-if="collaborationUsers.length > 0" class="collab-users">
+            <!-- 📊 显示前3个协作者头像 -->
             <div
-              v-for="(user, index) in otherCollaborationUsers"
+              v-for="(user, index) in collaborationUsers.slice(0, 3)"
               :key="user.id"
               class="collab-user-avatar"
-              :style="{ backgroundColor: user.color }"
-              :title="`${user.name} (${user.id})`"
+              :class="{ 'online': user.isOnline }"
+              :style="{ backgroundColor: user.color || generateUserColor(user.id) }"
+              :title="`${user.name} - ${user.isOnline ? '在线' : '离线'} (ID: ${user.id})`"
             >
-
-              <img v-if="user.avatar" :src="user.avatar" :alt="user.name" />
+              <img
+                v-if="user.avatar"
+                :src="user.avatar"
+                :alt="user.name"
+                class="avatar-image"
+              />
               <span v-else class="avatar-text">{{ getAvatarText(user.name) }}</span>
+              <!-- ✨ 在线状态指示器 -->
+              <div
+                v-if="user.isOnline"
+                class="online-indicator"
+                :title="`${user.name} 正在编辑`"
+              ></div>
+            </div>
+
+            <!-- 📈 如果超过3个协作者，显示数量提示 -->
+            <div
+              v-if="collaborationUsers.length > 3"
+              class="collab-more-count"
+              :title="`还有 ${collaborationUsers.length - 3} 位协作者在线`"
+            >
+              +{{ collaborationUsers.length - 3 }}
             </div>
           </div>
         </div>
@@ -392,6 +413,25 @@
   // 编辑模式状态
   const isEditMode = ref(false);
   const editReportId = ref<number | null>(null);
+  // 🔧 页面初始化状态标志，防止初始加载时误触发字段变更通知
+  const isPageInitializing = ref(false);
+
+  // 🔧 防重复通知机制
+  const recentNotifications = new Map<string, number>();
+  const NOTIFICATION_COOLDOWN = 3000; // 3秒内不重复显示相同通知
+
+  // 🔧 防重复通知的辅助函数
+  function shouldShowNotification(key: string): boolean {
+    const now = Date.now();
+    const lastNotification = recentNotifications.get(key);
+
+    if (!lastNotification || (now - lastNotification) > NOTIFICATION_COOLDOWN) {
+      recentNotifications.set(key, now);
+      return true;
+    }
+
+    return false;
+  }
 
   // 调试状态变量
   console.log('🐛 [Emergency Debug] isEditMode 初始值:', isEditMode.value);
@@ -486,48 +526,151 @@
   // 🤝 新的协作编辑系统
   const userStore = useUserStore();
 
-  // 协作相关状态
+  // 🔄 重构协作状态管理系统
   const showHistoryPanel = ref(false);
-  const showCollaborationPanel = ref(false); // 协作动态面板显示状态
+  const showCollaborationPanel = ref(false);
   const showConflictDialog = ref(false);
-  const collaborationUsers = ref<Array<{id: string, name: string, avatar?: string, color: string}>>([]); // 协作用户列表
 
-  // 过滤出其他协作用户（不包括当前用户）
-  const otherCollaborationUsers = computed(() => {
-    // 获取当前用户的有效ID（只考虑有值的ID）
-    const validUserIds = [
-      userStore.employeeId?.toString(),
-      userStore.userInfo?.userId?.toString(),
-      userStore.userInfo?.employeeId?.toString(),
-      userStore.actualName || operatorName.value // 使用姓名作为备用标识
-    ].filter(Boolean); // 过滤掉 null, undefined, 空字符串
+  // 📊 协作用户接口定义
+  interface CollaborationUser {
+    id: string;
+    name: string;
+    avatar?: string;
+    color: string;
+    isOnline: boolean;
+    lastActiveTime?: Date;
+    joinTime: Date;
+  }
 
-    const others = collaborationUsers.value.filter(user => {
-      // 如果用户信息无效，跳过
-      if (!user || !user.id || !user.name) {
+  // 🎭 统一协作者管理器
+  class CollaborationManager {
+    private users = ref<Map<string, CollaborationUser>>(new Map());
+    private currentUserId = '';
+    private currentUserName = '';
+
+    constructor() {
+      this.initCurrentUser();
+    }
+
+    // 🔧 初始化当前用户信息
+    private initCurrentUser() {
+      // 统一的用户ID获取逻辑
+      this.currentUserId = userStore.employeeId?.toString()
+        || userStore.userInfo?.userId?.toString()
+        || userStore.userInfo?.employeeId?.toString()
+        || 'unknown';
+
+      this.currentUserName = userStore.actualName
+        || userStore.userInfo?.actualName
+        || userStore.userInfo?.loginName
+        || operatorName.value
+        || '当前用户';
+
+      console.log('🔧 [CollaborationManager] 当前用户初始化:', {
+        userId: this.currentUserId,
+        userName: this.currentUserName
+      });
+    }
+
+    // ✨ 获取所有协作者（不包括当前用户）
+    getCollaborators(): CollaborationUser[] {
+      const allUsers = Array.from(this.users.value.values());
+      const collaborators = allUsers.filter(user =>
+        user.id !== this.currentUserId &&
+        user.name !== this.currentUserName &&
+        user.isOnline
+      );
+
+      console.log('👥 [CollaborationManager] 获取协作者:', {
+        total: allUsers.length,
+        collaborators: collaborators.length,
+        currentUser: { id: this.currentUserId, name: this.currentUserName }
+      });
+
+      return collaborators;
+    }
+
+    // ➕ 添加协作者
+    addUser(userData: { id: string; name: string; avatar?: string; color?: string }) {
+      const userId = userData.id.toString();
+
+      // 跳过当前用户
+      if (userId === this.currentUserId || userData.name === this.currentUserName) {
+        console.log('⚠️ [CollaborationManager] 跳过当前用户:', userData);
         return false;
       }
 
-      // 检查是否是当前用户（只检查有效的ID）
-      const isCurrentUserById = validUserIds.length > 0 && validUserIds.includes(user.id);
-      const isCurrentUserByName = validUserIds.length > 0 && validUserIds.includes(user.name);
-      const isTestUser = user.id === 'current' || user.name === '当前用户';
+      // 检查是否已存在
+      if (this.users.value.has(userId)) {
+        const existingUser = this.users.value.get(userId)!;
+        existingUser.isOnline = true;
+        existingUser.lastActiveTime = new Date();
+        console.log('🔄 [CollaborationManager] 更新现有用户:', userData);
+        return true;
+      }
 
-      const isCurrentUser = isCurrentUserById || isCurrentUserByName || isTestUser;
+      // 添加新用户
+      const newUser: CollaborationUser = {
+        id: userId,
+        name: userData.name,
+        avatar: userData.avatar,
+        color: userData.color || generateUserColor(userId),
+        isOnline: true,
+        lastActiveTime: new Date(),
+        joinTime: new Date()
+      };
 
-      return !isCurrentUser;
-    });
+      this.users.value.set(userId, newUser);
+      console.log('✅ [CollaborationManager] 添加新协作者:', newUser);
+      return true;
+    }
 
-    return others;
-  });
+    // ➖ 移除协作者
+    removeUser(userId: string) {
+      const userIdStr = userId.toString();
+      const user = this.users.value.get(userIdStr);
 
-  // 监听协作用户变化
-  watch(collaborationUsers, (newUsers) => {
-    console.log('👥 [Collaboration Debug] 协作用户列表变化:', {
-      count: newUsers.length,
-      users: newUsers.map(u => ({ id: u.id, name: u.name }))
-    });
-  }, { deep: true });
+      if (user) {
+        user.isOnline = false;
+        user.lastActiveTime = new Date();
+        console.log('👋 [CollaborationManager] 用户离线:', user);
+
+        // 5秒后完全移除离线用户
+        setTimeout(() => {
+          this.users.value.delete(userIdStr);
+          console.log('🗑️ [CollaborationManager] 清理离线用户:', userIdStr);
+        }, 5000);
+
+        return true;
+      }
+
+      return false;
+    }
+
+    // 🧹 清理所有用户
+    clearAll() {
+      this.users.value.clear();
+      console.log('🧹 [CollaborationManager] 清空所有协作者');
+    }
+
+    // 📊 获取响应式协作者列表
+    getReactiveCollaborators() {
+      return computed(() => this.getCollaborators());
+    }
+
+    // 📈 获取协作者数量
+    getCollaboratorCount() {
+      return computed(() => this.getCollaborators().length);
+    }
+  }
+
+  // 🎭 创建协作管理器实例
+  const collaborationManager = new CollaborationManager();
+  const collaborationUsers = collaborationManager.getReactiveCollaborators();
+  const collaboratorCount = collaborationManager.getCollaboratorCount();
+
+  // 🔄 兼容原有的otherCollaborationUsers
+  const otherCollaborationUsers = collaborationUsers;
 
   // 增强冲突管理器相关变量
   const intelligentConflictManagerRef = ref();
@@ -1399,7 +1542,13 @@
 
   // 表单字段实时同步监听器
   watch(() => formData.reportType, (newValue, oldValue) => {
-    console.log('📝 [Field Watch Debug] reportType变化:', { newValue, oldValue, isEditMode: isEditMode.value, isProcessingSync });
+    console.log('📝 [Field Watch Debug] reportType变化:', { newValue, oldValue, isEditMode: isEditMode.value, isProcessingSync, isPageInitializing: isPageInitializing.value });
+
+    // 🔧 页面初始化期间跳过同步，避免误触发通知
+    if (isPageInitializing.value) {
+      console.log('⚠️ [Field Watch Debug] 页面初始化期间，跳过reportType同步');
+      return;
+    }
 
     // 🔧 修复死循环：如果正在处理同步消息，跳过此次同步触发
     if (isProcessingSync) {
@@ -1421,7 +1570,14 @@
   });
 
   watch(() => formData.reportLevel, (newValue, oldValue) => {
-    console.log('📝 [Field Watch Debug] reportLevel变化:', { newValue, oldValue, isEditMode: isEditMode.value });
+    console.log('📝 [Field Watch Debug] reportLevel变化:', { newValue, oldValue, isEditMode: isEditMode.value, isPageInitializing: isPageInitializing.value });
+
+    // 🔧 页面初始化期间跳过同步，避免误触发通知
+    if (isPageInitializing.value) {
+      console.log('⚠️ [Field Watch Debug] 页面初始化期间，跳过reportLevel同步');
+      return;
+    }
+
     if (isEditMode.value && newValue !== null && newValue !== oldValue) {
       console.log('✅ [Field Watch Debug] 触发reportLevel同步');
       recordFieldChange('reportLevel', oldValue, newValue);
@@ -1430,7 +1586,14 @@
   });
 
   watch(() => formData.reporterName, (newValue, oldValue) => {
-    console.log('📝 [Field Watch Debug] reporterName变化:', { newValue, oldValue, isEditMode: isEditMode.value });
+    console.log('📝 [Field Watch Debug] reporterName变化:', { newValue, oldValue, isEditMode: isEditMode.value, isPageInitializing: isPageInitializing.value });
+
+    // 🔧 页面初始化期间跳过同步，避免误触发通知
+    if (isPageInitializing.value) {
+      console.log('⚠️ [Field Watch Debug] 页面初始化期间，跳过reporterName同步');
+      return;
+    }
+
     if (isEditMode.value && newValue && newValue.trim() && newValue !== oldValue) {
       console.log('✅ [Field Watch Debug] 触发reporterName同步');
       recordFieldChange('reporterName', oldValue, newValue.trim());
@@ -1439,7 +1602,14 @@
   });
 
   watch(() => formData.reporterPhone, (newValue, oldValue) => {
-    console.log('📝 [Field Watch Debug] reporterPhone变化:', { newValue, oldValue, isEditMode: isEditMode.value });
+    console.log('📝 [Field Watch Debug] reporterPhone变化:', { newValue, oldValue, isEditMode: isEditMode.value, isPageInitializing: isPageInitializing.value });
+
+    // 🔧 页面初始化期间跳过同步，避免误触发通知
+    if (isPageInitializing.value) {
+      console.log('⚠️ [Field Watch Debug] 页面初始化期间，跳过reporterPhone同步');
+      return;
+    }
+
     if (isEditMode.value && newValue && newValue.trim() && newValue !== oldValue) {
       console.log('✅ [Field Watch Debug] 触发reporterPhone同步');
       recordFieldChange('reporterPhone', oldValue, newValue.trim());
@@ -1456,7 +1626,14 @@
   });
 
   watch(() => formData.incidentLocation, (newValue, oldValue) => {
-    console.log('📝 [Field Watch Debug] incidentLocation变化:', { newValue, oldValue, isEditMode: isEditMode.value });
+    console.log('📝 [Field Watch Debug] incidentLocation变化:', { newValue, oldValue, isEditMode: isEditMode.value, isPageInitializing: isPageInitializing.value });
+
+    // 🔧 页面初始化期间跳过同步，避免误触发通知
+    if (isPageInitializing.value) {
+      console.log('⚠️ [Field Watch Debug] 页面初始化期间，跳过incidentLocation同步');
+      return;
+    }
+
     if (isEditMode.value && newValue && newValue.trim() && newValue !== oldValue) {
       console.log('✅ [Field Watch Debug] 触发incidentLocation同步');
       syncFieldUpdate('incidentLocation', newValue.trim(), oldValue);
@@ -1464,7 +1641,14 @@
   });
 
   watch(() => formData.description, (newValue, oldValue) => {
-    console.log('📝 [Field Watch Debug] description变化:', { newValue, oldValue, isEditMode: isEditMode.value });
+    console.log('📝 [Field Watch Debug] description变化:', { newValue, oldValue, isEditMode: isEditMode.value, isPageInitializing: isPageInitializing.value });
+
+    // 🔧 页面初始化期间跳过同步，避免误触发通知
+    if (isPageInitializing.value) {
+      console.log('⚠️ [Field Watch Debug] 页面初始化期间，跳过description同步');
+      return;
+    }
+
     if (isEditMode.value && newValue && newValue.trim() && newValue !== oldValue) {
       console.log('✅ [Field Watch Debug] 触发description同步');
       syncFieldUpdate('description', newValue.trim(), oldValue);
@@ -2070,6 +2254,10 @@
     console.log('🎯 [Page Init Debug] 路由参数:', { reportId, mode });
 
     if (reportId && mode === 'edit') {
+      // 🔧 开始页面初始化，设置标志防止误触发通知
+      isPageInitializing.value = true;
+      console.log('🔧 [Page Init Debug] 开始页面初始化，已设置初始化标志');
+
       isEditMode.value = true;
       editReportId.value = Number(reportId);
       console.log('✅ [Page Init Debug] 进入编辑模式:', { isEditMode: isEditMode.value, editReportId: editReportId.value });
@@ -2080,6 +2268,10 @@
       console.log('🔧 [Page Init Debug] 设置默认值确保页面显示');
 
       await loadEditData(editReportId.value);
+
+      // 🔧 数据加载完成，清除初始化标志
+      isPageInitializing.value = false;
+      console.log('✅ [Page Init Debug] 页面初始化完成，已清除初始化标志');
     } else {
       console.log('📝 [Page Init Debug] 进入创建模式或参数不匹配');
     }
@@ -2321,47 +2513,50 @@
     }
   }
 
-  // 统一协作事件处理器
+  // 🎭 重构后的协作事件处理器 - 使用新的CollaborationManager
   function handleUserJoined(user: any) {
-    console.log('👋 [Unified Collaboration] 用户加入:', user);
-    console.log('📊 [Collaboration Debug] 当前协作用户列表长度:', collaborationUsers.value.length);
+    console.log('👋 [CollaborationManager] 用户加入:', user);
 
-    // 添加到协作用户列表
     if (user && user.id && user.name) {
-      const exists = collaborationUsers.value.some(u => u.id === user.id);
-      console.log('🔍 [Collaboration Debug] 用户是否已存在:', exists);
+      const success = collaborationManager.addUser({
+        id: user.id,
+        name: user.name,
+        avatar: user.avatar,
+        color: user.color
+      });
 
-      if (!exists) {
-        const newUser = {
-          id: user.id,
-          name: user.name,
-          avatar: user.avatar,
-          color: user.color || generateUserColor(user.id)
-        };
+      if (success) {
+        console.log('✅ [CollaborationManager] 用户添加成功:', user.name);
 
-        collaborationUsers.value.push(newUser);
-        console.log('✅ [Collaboration Debug] 已添加用户:', newUser);
-        console.log('📊 [Collaboration Debug] 更新后协作用户列表:', collaborationUsers.value);
-
-        message.info(`${user.name} 加入了协作编辑`);
+        // 添加用户加入通知的冷却机制，避免重复弹框
+        const joinNotificationKey = `user_join_${user.id}`;
+        if (shouldShowNotification(joinNotificationKey)) {
+          message.info(`${user.name} 加入了协作编辑`);
+        } else {
+          console.log('⏰ [CollaborationManager] 跳过重复的加入通知:', user.name);
+        }
       } else {
-        console.log('⚠️ [Collaboration Debug] 用户已存在，跳过添加');
+        console.log('⚠️ [CollaborationManager] 用户已存在或添加失败:', user.name);
       }
     } else {
-      console.log('❌ [Collaboration Debug] 无效用户数据:', user);
+      console.log('❌ [CollaborationManager] 无效用户数据:', user);
     }
   }
 
   function handleUserLeft(user: any) {
-    console.log('👋 [Unified Collaboration] 用户离开:', user);
-    message.info(`${user.name} 离开了协作编辑`);
+    console.log('👋 [CollaborationManager] 用户离开:', user);
 
-    // 从协作用户列表移除
     if (user && user.id) {
-      const index = collaborationUsers.value.findIndex(u => u.id === user.id);
-      if (index > -1) {
-        collaborationUsers.value.splice(index, 1);
+      const success = collaborationManager.removeUser(user.id);
+
+      if (success) {
+        console.log('✅ [CollaborationManager] 用户移除成功:', user.name);
+        message.info(`${user.name} 离开了协作编辑`);
+      } else {
+        console.log('⚠️ [CollaborationManager] 用户不存在或移除失败:', user.name);
       }
+    } else {
+      console.log('❌ [CollaborationManager] 无效用户数据:', user);
     }
   }
 
@@ -2371,6 +2566,87 @@
       message.success('协作连接已建立');
     } else if (status === 'disconnected') {
       message.warning('协作连接已断开，尝试重连中...');
+    }
+  }
+
+  // 📡 广播当前用户加入协作（解决刷新后协作者不显示的问题）
+  function broadcastUserJoin() {
+    if (!isEditMode.value || !editReportId.value) {
+      console.log('⚠️ [CollaborationManager] 非编辑模式，跳过广播用户加入');
+      return;
+    }
+
+    console.log('📡 [CollaborationManager] 广播当前用户加入协作');
+
+    try {
+      const currentUserInfo = {
+        id: userStore.employeeId?.toString() || 'anonymous',
+        name: userStore.actualName || userStore.userInfo?.userName || '当前用户',
+        avatar: userStore.userInfo?.avatar || '',
+        color: generateUserColor(userStore.employeeId?.toString() || 'anonymous')
+      };
+
+      // 🔧 简化方案：直接通过现有的字段编辑功能来触发用户上线通知
+      // 这样其他客户端会收到字段编辑事件，从而知道有新用户在线
+
+      // 发送一个特殊的"用户上线"字段编辑消息
+      if (policeWebSocketService.isConnected()) {
+        policeWebSocketService.sendFieldEdit('__USER_ONLINE__', {
+          userId: currentUserInfo.id,
+          userName: currentUserInfo.name,
+          avatar: currentUserInfo.avatar,
+          color: currentUserInfo.color,
+          timestamp: Date.now()
+        });
+        console.log('📡 [CollaborationManager] 已发送用户上线通知:', currentUserInfo.name);
+      }
+
+      console.log('✅ [CollaborationManager] 当前用户信息已准备就绪:', currentUserInfo);
+    } catch (error) {
+      console.error('❌ [CollaborationManager] 广播用户加入失败:', error);
+    }
+  }
+
+  // 📋 处理在线用户列表响应
+  function handleOnlineUsersList(users: any[]) {
+    console.log('📋 [CollaborationManager] 开始处理在线用户列表:', users);
+
+    if (!Array.isArray(users) || users.length === 0) {
+      console.log('⚠️ [CollaborationManager] 在线用户列表为空或无效');
+      return;
+    }
+
+    let addedCount = 0;
+    users.forEach(userData => {
+      // 支持多种数据结构格式：userId/userName 或 id/name
+      const userId = userData?.userId || userData?.id;
+      const userName = userData?.userName || userData?.name;
+
+      if (!userData || !userId || !userName) {
+        console.log('⚠️ [CollaborationManager] 跳过无效用户数据:', userData);
+        console.log('⚠️ [CollaborationManager] 检查字段:', { userId, userName, rawData: userData });
+        return;
+      }
+
+      const user = {
+        id: userId.toString(),
+        name: userName,
+        avatar: userData.avatar,
+        color: userData.color || generateUserColor(userId.toString())
+      };
+
+      // 使用CollaborationManager添加用户（会自动排除当前用户）
+      const success = collaborationManager.addUser(user);
+      if (success) {
+        addedCount++;
+        console.log('✅ [CollaborationManager] 添加在线用户:', user.name);
+      }
+    });
+
+    console.log(`📈 [CollaborationManager] 成功添加 ${addedCount} 个在线协作者`);
+
+    if (addedCount > 0) {
+      message.info(`发现 ${addedCount} 位协作者在线`);
     }
   }
 
@@ -2459,35 +2735,105 @@
         await initializeWebSocketService('collaboration');
         console.log('✅ [Unified WebSocket] 协作WebSocket服务已初始化');
 
-        // 设置警务WebSocket事件监听
+        // 🎭 重构后的警务WebSocket事件监听 - 使用新的CollaborationManager
         policeWebSocketService.on('user_join', (data: any) => {
-          const user: CollaborationUser = {
-            id: data.userId,
+          const user = {
+            id: data.userId.toString(),
             name: data.userName,
-            color: generateUserColor(data.userId.toString()),
-            isOnline: true,
-            lastActiveTime: data.timestamp
+            avatar: data.avatar,
+            color: data.color || generateUserColor(data.userId.toString())
           };
 
-          // 添加到协作用户列表（排除自己）
-          const currentUserId = userStore.employeeId?.toString();
-          if (data.userId.toString() !== currentUserId) {
-            collaborationUsers.value.push(user);
-          }
-
+          // 使用新的CollaborationManager处理用户加入
+          handleUserJoined(user);
           console.log('👤 [Unified WebSocket] 用户加入协作:', user);
         });
 
         policeWebSocketService.on('user_leave', (data: any) => {
-          const userIndex = collaborationUsers.value.findIndex(u => u.id === data.userId.toString());
-          if (userIndex !== -1) {
-            collaborationUsers.value.splice(userIndex, 1);
-          }
+          const user = {
+            id: data.userId.toString(),
+            name: data.userName
+          };
+
+          // 使用新的CollaborationManager处理用户离开
+          handleUserLeft(user);
           console.log('👤 [Unified WebSocket] 用户离开协作:', data.userName);
+        });
+
+        // 🔄 处理在线用户列表响应
+        policeWebSocketService.on('online_users', (data: any) => {
+          console.log('📋 [Police WebSocket] 收到在线用户列表:', data);
+          console.log('📋 [Police WebSocket] 数据结构分析:', {
+            hasUsers: 'users' in data,
+            hasData: 'data' in data,
+            keys: Object.keys(data),
+            usersType: typeof data.users,
+            dataType: typeof data.data
+          });
+
+          let userList = [];
+          if (Array.isArray(data.users)) {
+            userList = data.users;
+          } else if (Array.isArray(data.data)) {
+            userList = data.data;
+          } else if (Array.isArray(data)) {
+            userList = data;
+          }
+
+          console.log('📋 [Police WebSocket] 解析后的用户列表:', userList);
+          handleOnlineUsersList(userList);
+        });
+
+        policeWebSocketService.on('user_list', (data: any) => {
+          console.log('📋 [Police WebSocket] 收到用户列表:', data);
+          console.log('📋 [Police WebSocket] 数据结构分析:', {
+            hasUsers: 'users' in data,
+            hasData: 'data' in data,
+            keys: Object.keys(data),
+            usersType: typeof data.users,
+            dataType: typeof data.data
+          });
+
+          let userList = [];
+          if (Array.isArray(data.users)) {
+            userList = data.users;
+          } else if (Array.isArray(data.data)) {
+            userList = data.data;
+          } else if (Array.isArray(data)) {
+            userList = data;
+          }
+
+          console.log('📋 [Police WebSocket] 解析后的用户列表:', userList);
+          handleOnlineUsersList(userList);
         });
 
         policeWebSocketService.on('field_edit', (data: PoliceReportCollaboration) => {
           console.log('📝 [Unified WebSocket] 收到字段编辑事件:', data);
+
+          // 🔧 特殊处理用户上线通知
+          if (data.fieldName === '__USER_ONLINE__' && data.value && typeof data.value === 'object') {
+            console.log('👤 [CollaborationManager] 收到用户上线通知:', data.value);
+            console.log('👤 [CollaborationManager] 当前用户ID:', userStore.employeeId?.toString());
+            console.log('👤 [CollaborationManager] 上线用户ID:', data.value.userId);
+
+            // 添加用户到协作者列表
+            const userInfo = {
+              id: data.value.userId,
+              name: data.value.userName,
+              avatar: data.value.avatar,
+              color: data.value.color
+            };
+
+            // 只处理其他用户的上线通知
+            if (userInfo.id !== userStore.employeeId?.toString()) {
+              console.log('📡 [CollaborationManager] 处理其他用户的上线通知:', userInfo);
+              handleUserJoined(userInfo);
+              console.log('✅ [CollaborationManager] 已处理用户上线通知:', userInfo.name);
+            } else {
+              console.log('⚠️ [CollaborationManager] 跳过自己的上线通知');
+            }
+            return; // 不继续处理，因为这不是真正的字段编辑
+          }
 
           // 只处理其他用户的编辑事件，避免处理自己的事件
           if (data.userId.toString() !== currentUser.value?.id?.toString()) {
@@ -2510,7 +2856,12 @@
               } else {
                 // 普通字段直接更新
                 formData[data.fieldName as keyof typeof formData] = data.value;
-                message.info(`${data.userName}修改了${getFriendlyFieldName(data.fieldName)}`);
+
+                // 🔧 使用防重复通知机制
+                const notificationKey = `field_edit_${data.fieldName}_${data.userName}`;
+                if (shouldShowNotification(notificationKey)) {
+                  message.info(`${data.userName}修改了${getFriendlyFieldName(data.fieldName)}`);
+                }
               }
             }
             // 处理表单配置更新消息
@@ -2564,7 +2915,11 @@
                 });
               });
 
-              message.info(`${data.userName}修改了专业字段${data.fieldName}`);
+              // 🔧 使用防重复通知机制
+              const notificationKey = `professional_field_edit_${data.fieldName}_${data.userName}`;
+              if (shouldShowNotification(notificationKey)) {
+                message.info(`${data.userName}修改了专业字段${data.fieldName}`);
+              }
               console.log('✅ [WebSocket专业字段] 响应式数据已更新:', {
                 fieldName: data.fieldName,
                 value: data.value,
@@ -2621,7 +2976,11 @@
               lockedBy: fieldState.lockedBy
             });
 
-            message.info(`${data.userName} 开始编辑 ${getFriendlyFieldName(data.fieldName)}`);
+            // 🔧 使用防重复通知机制，避免短时间内重复显示相同通知
+            const notificationKey = `field_focus_${data.fieldName}_${data.userName}`;
+            if (shouldShowNotification(notificationKey)) {
+              message.info(`${data.userName} 开始编辑 ${getFriendlyFieldName(data.fieldName)}`);
+            }
           }
         });
 
@@ -2689,7 +3048,11 @@
 
             // 只为其他用户的操作显示消息通知
             if (!isCurrentUser) {
-              message.success(`${data.userName} 结束编辑 ${getFriendlyFieldName(data.fieldName)}`);
+              // 🔧 使用防重复通知机制，避免短时间内重复显示相同通知
+              const notificationKey = `field_blur_${data.fieldName}_${data.userName}`;
+              if (shouldShowNotification(notificationKey)) {
+                message.success(`${data.userName} 结束编辑 ${getFriendlyFieldName(data.fieldName)}`);
+              }
             }
           } else {
             console.log('🚫 [Field Blur] 跳过处理 - 当前用户的手动失焦事件');
@@ -2706,14 +3069,65 @@
           // 处理报告解锁逻辑
         });
 
-        // 协作WebSocket事件监听已移除，避免与警务WebSocket重复处理
-        // 所有协作事件通过 policeWebSocketService 统一处理
+        // 🤝 添加协作WebSocket事件监听器来处理用户列表
+        collaborationWebSocketService.on('user_list', (data: any) => {
+          console.log('📋 [Collaboration WebSocket] 收到用户列表:', data);
+          console.log('📋 [Collaboration WebSocket] 数据结构分析:', {
+            hasUsers: 'users' in data,
+            hasCollaborators: 'collaborators' in data,
+            hasData: 'data' in data,
+            keys: Object.keys(data),
+            usersType: typeof data.users,
+            collaboratorsType: typeof data.collaborators,
+            dataType: typeof data.data
+          });
+
+          // 🔧 尝试多种可能的数据结构
+          let userList = [];
+          if (Array.isArray(data.users)) {
+            userList = data.users;
+          } else if (Array.isArray(data.collaborators)) {
+            userList = data.collaborators;
+          } else if (Array.isArray(data.data)) {
+            userList = data.data;
+          } else if (Array.isArray(data)) {
+            userList = data;
+          }
+
+          console.log('📋 [Collaboration WebSocket] 解析后的用户列表:', userList);
+          handleOnlineUsersList(userList);
+        });
+
+        collaborationWebSocketService.on('user_join', (data: any) => {
+          const user = {
+            id: data.userId?.toString() || data.id?.toString(),
+            name: data.userName || data.name,
+            avatar: data.avatar,
+            color: data.color || generateUserColor((data.userId || data.id)?.toString())
+          };
+          handleUserJoined(user);
+          console.log('👤 [Collaboration WebSocket] 用户加入:', user);
+        });
+
+        collaborationWebSocketService.on('user_leave', (data: any) => {
+          const user = {
+            id: data.userId?.toString() || data.id?.toString(),
+            name: data.userName || data.name
+          };
+          handleUserLeft(user);
+          console.log('👤 [Collaboration WebSocket] 用户离开:', user);
+        });
 
         // 如果在编辑模式，加入报告协作
         if (isEditMode.value && editReportId.value) {
           await policeWebSocketService.joinReport(editReportId.value);
           await collaborationWebSocketService.joinDocument(editReportId.value.toString(), 'police-report');
           console.log(`✅ [Unified WebSocket] 已加入报告${editReportId.value}的协作`);
+
+          // 🔄 广播当前用户的加入，让其他客户端知道我们在线
+          setTimeout(() => {
+            broadcastUserJoin();
+          }, 1000); // 延迟1秒广播，确保加入成功
         }
 
         webSocketConnectionStatus.value = 'connected';
@@ -4004,6 +4418,84 @@
   height: 100%;
   border-radius: 50%;
   object-fit: cover;
+}
+
+/* 🎭 重构后的协作者头像样式增强 */
+.collab-user-avatar {
+  position: relative;
+  overflow: visible;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.collab-user-avatar.online {
+  border: 2px solid #52c41a;
+  box-shadow: 0 0 10px rgba(82, 196, 26, 0.3);
+}
+
+.collab-user-avatar .avatar-image {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.collab-user-avatar .avatar-text {
+  font-size: 10px;
+  font-weight: 700;
+  color: white;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+/* ✨ 在线状态指示器 */
+.online-indicator {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  width: 8px;
+  height: 8px;
+  background: #52c41a;
+  border: 2px solid white;
+  border-radius: 50%;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.2);
+    opacity: 0.8;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* 📈 更多协作者数量提示 */
+.collab-more-count {
+  width: 24px;
+  height: 20px;
+  border-radius: 10px;
+  background: #8c8c8c;
+  color: white;
+  font-size: 8px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 2px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+}
+
+.collab-more-count:hover {
+  background: #595959;
+  transform: scale(1.1);
 }
 
 /* 协作浮动面板样式 */
