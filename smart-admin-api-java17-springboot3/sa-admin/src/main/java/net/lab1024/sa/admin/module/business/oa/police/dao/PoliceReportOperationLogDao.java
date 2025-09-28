@@ -8,7 +8,9 @@ import net.lab1024.sa.admin.module.business.oa.police.domain.vo.CollaborationHis
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 警情操作记录DAO
@@ -54,4 +56,7 @@ public interface PoliceReportOperationLogDao extends BaseMapper<PoliceReportOper
      * 查询最近的操作记录
      */
     List<PoliceReportOperationLogEntity> queryRecentOperations(@Param("reportId") Long reportId, @Param("hours") Integer hours);
+
+    // TODO: 后续实现高级统计和异常检测功能
+    // 暂时注释掉未实现的方法，避免编译错误
 }

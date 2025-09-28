@@ -11,12 +11,14 @@ import net.lab1024.sa.admin.module.business.oa.police.domain.form.PoliceReportAd
 import net.lab1024.sa.admin.module.business.oa.police.domain.form.PoliceReportQueryForm;
 import net.lab1024.sa.admin.module.business.oa.police.domain.form.PoliceReportUpdateForm;
 import net.lab1024.sa.admin.module.business.oa.police.domain.vo.PoliceReportVO;
+import net.lab1024.sa.admin.module.business.oa.police.domain.vo.DataVersionVO;
 import net.lab1024.sa.admin.module.business.oa.police.service.PoliceReportService;
 import net.lab1024.sa.admin.module.business.oa.police.service.PoliceEditLockService;
 import net.lab1024.sa.base.common.domain.PageResult;
 import net.lab1024.sa.base.common.domain.RequestUser;
 import net.lab1024.sa.base.common.domain.ResponseDTO;
 import net.lab1024.sa.base.common.util.SmartRequestUtil;
+import net.lab1024.sa.base.module.support.operatelog.annotation.OperateLog;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -30,6 +32,7 @@ import java.util.Map;
  */
 @RestController
 @Tag(name = "警情录入管理")
+@OperateLog
 public class PoliceReportController {
 
     @Resource
@@ -154,8 +157,36 @@ public class PoliceReportController {
     public ResponseDTO<String> syncFieldUpdate(
             @PathVariable Long reportId,
             @RequestParam String fieldName,
-            @RequestParam(required = false) String fieldValue) {
-        return policeReportService.syncFieldUpdate(reportId, fieldName, fieldValue);
+            @RequestParam(required = false) String fieldValue,
+            @RequestParam(required = false) String oldValue) {
+
+        // 如果前端没有传递旧值，则从数据库获取（兼容性考虑）
+        String actualOldValue = oldValue;
+        if (actualOldValue == null) {
+            actualOldValue = policeReportService.getFieldValue(reportId, fieldName);
+        }
+
+        // 调用修改后的方法，传入旧值和新值
+        return policeReportService.syncFieldUpdateWithOldValue(reportId, fieldName, actualOldValue, fieldValue);
+    }
+
+    // ========== 轻量级数据同步检查接口 ==========
+
+    @Operation(summary = "检查数据版本 - 轻量级同步检查")
+    @GetMapping("/oa/police/report/check-version")
+    @SaCheckPermission("oa:police:query")
+    public ResponseDTO<DataVersionVO> checkDataVersion(@RequestParam(required = false) String clientVersion) {
+        return policeReportService.checkDataVersion(clientVersion);
+    }
+
+    @Operation(summary = "检查数据版本 - 带分页信息")
+    @GetMapping("/oa/police/report/check-version-with-page")
+    @SaCheckPermission("oa:police:query")
+    public ResponseDTO<DataVersionVO> checkDataVersionWithPage(
+            @RequestParam(required = false) String clientVersion,
+            @RequestParam(defaultValue = "1") Integer pageNum,
+            @RequestParam(defaultValue = "20") Integer pageSize) {
+        return policeReportService.checkDataVersionWithPage(clientVersion, pageNum, pageSize);
     }
 
 }

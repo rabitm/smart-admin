@@ -36,7 +36,7 @@
   </div>
 </template>
 <script setup lang="ts">
-  import { ref } from 'vue';
+  import { ref, nextTick } from 'vue';
   import { HOME_PAGE_NAME } from '/@/constants/system/home-const';
   import SubMenu from './sub-menu.vue';
   import { router } from '/@/router';
@@ -75,8 +75,30 @@
 
   // 页面跳转
   function turnToPage(route) {
-    useUserStore().deleteKeepAliveIncludes(route.menuId.toString());
-    router.push({ name: route.menuId.toString() });
+    if (!route || !route.menuId) {
+      console.warn('路由参数不完整:', route);
+      return;
+    }
+
+    try {
+      // 安全地删除缓存
+      const userStore = useUserStore();
+      if (userStore && typeof userStore.deleteKeepAliveIncludes === 'function') {
+        userStore.deleteKeepAliveIncludes(route.menuId.toString());
+      }
+
+      // 使用nextTick确保OM更新完成后再跳转
+      nextTick(() => {
+        router.push({ name: route.menuId.toString() }).catch(err => {
+          // 忽略重复导航错误
+          if (err.name !== 'NavigationDuplicated') {
+            console.error('路由跳转失败:', err);
+          }
+        });
+      });
+    } catch (error) {
+      console.error('页面跳转失败:', error);
+    }
   }
 
   function goHome() {

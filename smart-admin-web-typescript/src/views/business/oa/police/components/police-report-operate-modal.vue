@@ -13,7 +13,7 @@
     @cancel="onClose"
     @ok="onSubmit"
     :confirmLoading="confirmLoading"
-    :cancelText="$t('common.cancel')"
+    cancelText="取消"
     :okText="form.reportId ? $t('common.confirm') : '立即处理'"
     :okButtonProps="{ type: 'primary', size: 'large' }"
     :cancelButtonProps="{ size: 'large' }"

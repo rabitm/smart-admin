@@ -28,7 +28,7 @@
 </template>
 <script setup lang="ts">
   import _ from 'lodash';
-  import { computed, ref, watch } from 'vue';
+  import { computed, ref, watch, nextTick } from 'vue';
   import { useRoute } from 'vue-router';
   import SubMenu from './sub-menu.vue';
   import { router } from '/@/router/index';
@@ -55,8 +55,30 @@
 
   // 页面跳转
   function turnToPage(menu) {
-    useUserStore().deleteKeepAliveIncludes(menu.menuId.toString());
-    router.push({ path: menu.path });
+    if (!menu || !menu.path) {
+      console.warn('菜单参数不完整:', menu);
+      return;
+    }
+
+    try {
+      // 安全地删除缓存
+      const userStore = useUserStore();
+      if (userStore && typeof userStore.deleteKeepAliveIncludes === 'function') {
+        userStore.deleteKeepAliveIncludes(menu.menuId.toString());
+      }
+
+      // 使用nextTick确保OM更新完成后再跳转
+      nextTick(() => {
+        router.push({ path: menu.path }).catch(err => {
+          // 忽略重复导航错误
+          if (err.name !== 'NavigationDuplicated') {
+            console.error('路由跳转失败:', err);
+          }
+        });
+      });
+    } catch (error) {
+      console.error('页面跳转失败:', error);
+    }
   }
 
   /**

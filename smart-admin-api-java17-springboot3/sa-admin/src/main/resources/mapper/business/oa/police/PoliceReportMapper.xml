@@ -210,4 +210,20 @@
         ) AS unique_locations
     </select>
 
+    <!-- ========== 轻量级数据检查查询 ========== -->
+
+    <!-- 获取最后更新时间 - 只查询时间字段，极轻量级 -->
+    <select id="getMaxUpdateTime" resultType="java.lang.Long">
+        SELECT UNIX_TIMESTAMP(MAX(GREATEST(create_time, COALESCE(update_time, create_time)))) * 1000 as max_time
+        FROM t_oa_police_report
+        WHERE deleted_flag = 0
+    </select>
+
+    <!-- 获取总记录数 - 轻量级计数查询 -->
+    <select id="getTotalCount" resultType="java.lang.Long">
+        SELECT COUNT(1)
+        FROM t_oa_police_report
+        WHERE deleted_flag = 0
+    </select>
+
 </mapper>

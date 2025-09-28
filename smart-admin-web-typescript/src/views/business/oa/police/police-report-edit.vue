@@ -415,10 +415,11 @@
   // 字段同步防抖函数
   const fieldSyncDebounce = new Map();
 
-  function syncFieldUpdate(fieldName: string, fieldValue: any) {
+  function syncFieldUpdate(fieldName: string, fieldValue: any, oldValue?: any) {
     console.log('🔄 [Field Sync Debug] 开始字段同步:', {
       fieldName,
       fieldValue,
+      oldValue,
       reportId: reportId.value
     });
 
@@ -439,10 +440,11 @@
         console.log('📡 [Field Sync Debug] 发送字段同步请求:', {
           reportId: reportId.value,
           fieldName,
-          fieldValue
+          fieldValue,
+          oldValue
         });
 
-        await policeReportApi.syncFieldUpdate(reportId.value, fieldName, fieldValue);
+        await policeReportApi.syncFieldUpdate(reportId.value, fieldName, fieldValue, oldValue);
         console.log(`✅ [Field Sync Debug] 字段 ${fieldName} 同步成功`);
       } catch (error) {
         console.error(`❌ [Field Sync Debug] 字段 ${fieldName} 同步失败:`, error);

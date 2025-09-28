@@ -10,15 +10,15 @@
 <template>
   <a-sub-menu :key="menuInfo.menuId">
     <template #icon>
-      <component :is="$antIcons[menuInfo.icon]" />
+      <component :is="$antIcons[menuInfo.icon]" v-if="menuInfo.icon" />
     </template>
     <template #title>{{ menuInfo.menuName }}</template>
     <template v-for="item in menuInfo.children" :key="item.menuId">
       <template v-if="item.visibleFlag && !item.disabledFlag">
-        <template v-if="!item.children">
+        <template v-if="!item.children || $lodash.isEmpty(item.children)">
           <a-menu-item :key="item.menuId" @click="turnToPage(item)">
             <template #icon>
-              <component :is="$antIcons[item.icon]" />
+              <component :is="$antIcons[item.icon]" v-if="item.icon" />
             </template>
             {{ item.menuName }}
           </a-menu-item>
@@ -40,6 +40,14 @@
 
   const emits = defineEmits(['turnToPage']);
   const turnToPage = (menu) => {
-    emits('turnToPage', menu);
+    if (!menu) {
+      console.warn('子菜单参数为空');
+      return;
+    }
+    try {
+      emits('turnToPage', menu);
+    } catch (error) {
+      console.error('子菜单跳转失败:', error);
+    }
   };
 </script>

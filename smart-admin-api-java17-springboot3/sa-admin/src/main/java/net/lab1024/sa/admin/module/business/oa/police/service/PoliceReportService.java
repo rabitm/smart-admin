@@ -1,6 +1,7 @@
 package net.lab1024.sa.admin.module.business.oa.police.service;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import net.lab1024.sa.admin.module.business.oa.police.constant.PoliceReportStatusEnum;
@@ -12,6 +13,7 @@ import net.lab1024.sa.admin.module.business.oa.police.domain.form.PoliceReportAd
 import net.lab1024.sa.admin.module.business.oa.police.domain.form.PoliceReportQueryForm;
 import net.lab1024.sa.admin.module.business.oa.police.domain.form.PoliceReportUpdateForm;
 import net.lab1024.sa.admin.module.business.oa.police.domain.vo.PoliceReportVO;
+import net.lab1024.sa.admin.module.business.oa.police.domain.vo.DataVersionVO;
 import net.lab1024.sa.base.common.domain.PageResult;
 import net.lab1024.sa.base.common.domain.ResponseDTO;
 import net.lab1024.sa.base.common.code.SystemErrorCode;
@@ -25,7 +27,9 @@ import net.lab1024.sa.admin.module.business.oa.seat.service.SeatSyncService;
 import net.lab1024.sa.base.module.support.datatracer.service.DataTracerService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.scheduling.annotation.Async;
 
+import java.lang.reflect.Field;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -33,6 +37,12 @@ import java.util.Objects;
 import java.util.ArrayList;
 import java.util.Map;
 import java.util.HashMap;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CompletableFuture;
+import java.util.stream.Collectors;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
@@ -150,6 +160,10 @@ public class PoliceReportService {
             return ResponseDTO.userErrorParam("警情信息不存在");
         }
 
+        // 记录详细的字段变更信息（在更新前）
+        String detailedChanges = buildDetailedChangeLog(oldPoliceReport, updateForm);
+        log.info("警情更新详细记录: reportId={}, changes={}", reportId, detailedChanges);
+
         // 数据更新
         PoliceReportEntity updateEntity = SmartBeanUtil.copy(updateForm, PoliceReportEntity.class);
         policeReportDao.updateById(updateEntity);
@@ -207,6 +221,65 @@ public class PoliceReportService {
     private final AtomicLong lastBatchProcess = new AtomicLong(0);
     private static final int BATCH_INTERVAL_MS = 100; // 100ms批量处理间隔
 
+    /**
+     * 获取指定字段的值（支持主实体字段和专业字段）
+     */
+    public String getFieldValue(Long reportId, String fieldName) {
+        try {
+            // 检查是否为主实体字段
+            if (isBasicField(fieldName)) {
+                return getMainEntityFieldValue(reportId, fieldName);
+            } else {
+                return getProfessionalFieldValue(reportId, fieldName);
+            }
+        } catch (Exception e) {
+            log.error("获取字段值失败: fieldName={}", fieldName, e);
+            return null;
+        }
+    }
+
+    /**
+     * 获取主实体字段值
+     */
+    private String getMainEntityFieldValue(Long reportId, String fieldName) {
+        try {
+            PoliceReportEntity entity = policeReportDao.selectById(reportId);
+            if (entity == null) {
+                return null;
+            }
+
+            // 使用反射获取字段值
+            Field field = entity.getClass().getDeclaredField(fieldName);
+            field.setAccessible(true);
+            Object value = field.get(entity);
+            return value != null ? String.valueOf(value) : null;
+        } catch (NoSuchFieldException e) {
+            log.debug("字段不在主实体中: fieldName={}", fieldName);
+            return null;
+        } catch (Exception e) {
+            log.error("获取主实体字段值失败: fieldName={}", fieldName, e);
+            return null;
+        }
+    }
+
+    /**
+     * 获取专业字段值
+     */
+    private String getProfessionalFieldValue(Long reportId, String fieldName) {
+        try {
+            PoliceReportFieldDataEntity fieldData = policeReportFieldDataDao.selectOne(
+                new LambdaQueryWrapper<PoliceReportFieldDataEntity>()
+                    .eq(PoliceReportFieldDataEntity::getReportId, reportId)
+                    .eq(PoliceReportFieldDataEntity::getFieldKey, fieldName)
+            );
+
+            return fieldData != null ? fieldData.getFieldValue() : null;
+        } catch (Exception e) {
+            log.error("获取专业字段值失败: fieldName={}", fieldName, e);
+            return null;
+        }
+    }
+
     public ResponseDTO<String> syncFieldUpdate(Long reportId, String fieldName, String fieldValue) {
         try {
             String currentUserName = SmartRequestUtil.getRequestUser() != null ?
@@ -229,6 +302,136 @@ public class PoliceReportService {
             return ResponseDTO.error(SystemErrorCode.SYSTEM_ERROR);
         }
     }
+
+    /**
+     * 同步字段更新 - 包含旧值和新值的版本
+     */
+    public ResponseDTO<String> syncFieldUpdateWithOldValue(Long reportId, String fieldName, String oldValue, String newValue) {
+        try {
+            String currentUserName = SmartRequestUtil.getRequestUser() != null ?
+                SmartRequestUtil.getRequestUser().getUserName() : "系统";
+            Long currentUserId = SmartRequestUtil.getRequestUser() != null ?
+                SmartRequestUtil.getRequestUser().getUserId() : null;
+
+            log.info("字段更新记录: reportId={}, fieldName={}, oldValue={}, newValue={}", reportId, fieldName, oldValue, newValue);
+
+            // 跳过特殊控制字段
+            if ("__FORM_CONFIG_UPDATE__".equals(fieldName)) {
+                log.debug("跳过表单配置更新字段: {}", fieldName);
+                return ResponseDTO.ok("表单配置更新字段已跳过");
+            }
+
+            // 直接更新数据库，避免批量处理的并发问题
+            updateSingleField(reportId, fieldName, newValue);
+
+            // 记录操作日志
+            syncService.recordOperation(reportId, currentUserId, currentUserName,
+                fieldName, oldValue, newValue, "FIELD_UPDATE");
+
+            // 通知实时更新（WebSocket）
+            try {
+                seatSyncService.notifyPoliceCaseFieldSync(reportId, currentUserId, currentUserName, fieldName, newValue);
+            } catch (Exception e) {
+                log.error("发送WebSocket通知失败", e);
+            }
+
+            return ResponseDTO.ok();
+        } catch (Exception e) {
+            log.error("同步字段更新失败", e);
+            return ResponseDTO.error(SystemErrorCode.SYSTEM_ERROR);
+        }
+    }
+
+    /**
+     * 直接更新单个字段到数据库（支持主实体字段和专业字段）
+     */
+    private void updateSingleField(Long reportId, String fieldName, String newValue) {
+        try {
+            // 检查是否为主实体字段
+            if (isBasicField(fieldName)) {
+                updateMainEntityField(reportId, fieldName, newValue);
+            } else {
+                updateProfessionalField(reportId, fieldName, newValue);
+            }
+
+            log.debug("字段更新成功: reportId={}, fieldName={}, newValue={}", reportId, fieldName, newValue);
+
+        } catch (Exception e) {
+            log.error("更新字段失败: reportId={}, fieldName={}, newValue={}", reportId, fieldName, newValue, e);
+            throw new RuntimeException("字段更新失败", e);
+        }
+    }
+
+    /**
+     * 更新主实体字段
+     */
+    private void updateMainEntityField(Long reportId, String fieldName, String newValue) {
+        try {
+            // 获取当前警情实体
+            PoliceReportEntity entity = policeReportDao.selectById(reportId);
+            if (entity == null) {
+                log.warn("警情不存在: reportId={}", reportId);
+                return;
+            }
+
+            // 使用反射更新字段值
+            Field field = entity.getClass().getDeclaredField(fieldName);
+            field.setAccessible(true);
+
+            // 根据字段类型设置值
+            if (field.getType() == String.class) {
+                field.set(entity, String.valueOf(newValue));
+            } else if (field.getType() == Integer.class || field.getType() == int.class) {
+                field.set(entity, Integer.valueOf(String.valueOf(newValue)));
+            } else if (field.getType() == Long.class || field.getType() == long.class) {
+                field.set(entity, Long.valueOf(String.valueOf(newValue)));
+            } else {
+                field.set(entity, newValue);
+            }
+
+            // 更新数据库
+            policeReportDao.updateById(entity);
+
+        } catch (Exception e) {
+            log.error("更新主实体字段失败: reportId={}, fieldName={}, newValue={}", reportId, fieldName, newValue, e);
+            throw new RuntimeException("主实体字段更新失败", e);
+        }
+    }
+
+    /**
+     * 更新专业字段
+     */
+    private void updateProfessionalField(Long reportId, String fieldName, String newValue) {
+        try {
+            // 检查字段是否存在
+            PoliceReportFieldDataEntity existingField = policeReportFieldDataDao.selectOne(
+                new LambdaQueryWrapper<PoliceReportFieldDataEntity>()
+                    .eq(PoliceReportFieldDataEntity::getReportId, reportId)
+                    .eq(PoliceReportFieldDataEntity::getFieldKey, fieldName)
+            );
+
+            if (existingField != null) {
+                // 更新现有字段
+                existingField.setFieldValue(newValue);
+                existingField.setUpdateTime(LocalDateTime.now());
+                policeReportFieldDataDao.updateById(existingField);
+            } else {
+                // 创建新字段
+                PoliceReportFieldDataEntity newField = new PoliceReportFieldDataEntity();
+                newField.setReportId(reportId);
+                newField.setFieldKey(fieldName);
+                newField.setFieldValue(newValue);
+                newField.setCreateTime(LocalDateTime.now());
+                newField.setUpdateTime(LocalDateTime.now());
+                policeReportFieldDataDao.insert(newField);
+            }
+
+        } catch (Exception e) {
+            log.error("更新专业字段失败: reportId={}, fieldName={}, newValue={}", reportId, fieldName, newValue, e);
+            throw new RuntimeException("专业字段更新失败", e);
+        }
+    }
+
 
     /**
      * 安排批量处理
@@ -273,11 +476,45 @@ public class PoliceReportService {
                     Map<String, Object> changes = entry.getValue();
 
                     try {
-                        // 同步字段更新
+                        // 获取当前警情实体用于更新
+                        PoliceReportEntity entity = policeReportDao.selectById(reportId);
+                        if (entity == null) {
+                            log.warn("警情不存在: reportId={}", reportId);
+                            return;
+                        }
+
+                        // 同步字段更新（现在会获取旧值）
                         changes.forEach((fieldName, fieldValue) -> {
-                            syncService.syncFieldUpdate(reportId, userId, userName,
-                                fieldName, String.valueOf(fieldValue), "FIELD_UPDATE");
+                            try {
+                                // 在更新前获取旧值
+                                String oldValue = getFieldValue(reportId, fieldName);
+
+                                // 使用反射更新字段值
+                                Field field = entity.getClass().getDeclaredField(fieldName);
+                                field.setAccessible(true);
+
+                                // 根据字段类型设置值
+                                if (field.getType() == String.class) {
+                                    field.set(entity, String.valueOf(fieldValue));
+                                } else if (field.getType() == Integer.class || field.getType() == int.class) {
+                                    field.set(entity, Integer.valueOf(String.valueOf(fieldValue)));
+                                } else if (field.getType() == Long.class || field.getType() == long.class) {
+                                    field.set(entity, Long.valueOf(String.valueOf(fieldValue)));
+                                } else {
+                                    field.set(entity, fieldValue);
+                                }
+
+                                // 记录操作日志
+                                syncService.recordOperation(reportId, userId, userName,
+                                    fieldName, oldValue, String.valueOf(fieldValue), "FIELD_UPDATE");
+
+                            } catch (Exception e) {
+                                log.error("更新字段失败: fieldName={}, fieldValue={}", fieldName, fieldValue, e);
+                            }
                         });
+
+                        // 批量更新数据库
+                        policeReportDao.updateById(entity);
 
                         // 检查是否包含关键字段，触发列表更新
                         Map<String, Object> keyChanges = changes.entrySet().stream()
@@ -776,6 +1013,153 @@ public class PoliceReportService {
     /**
      * 构建变更数据映射
      */
+    /**
+     * 构建详细的变更日志（包含原值和新值）
+     */
+    private String buildDetailedChangeLog(PoliceReportEntity oldEntity, PoliceReportUpdateForm updateForm) {
+        StringBuilder changeLog = new StringBuilder();
+        String currentUser = SmartRequestUtil.getRequestUser() != null ?
+            SmartRequestUtil.getRequestUser().getUserName() : "系统";
+        String currentTime = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+
+        changeLog.append(String.format("[%s] %s 修改了警情信息：\n", currentTime, currentUser));
+
+        // 检查警情类型变更
+        if (updateForm.getReportType() != null && !Objects.equals(oldEntity.getReportType(), updateForm.getReportType())) {
+            changeLog.append(String.format("  • 警情类型：%s → %s\n",
+                getEnumDescription("POLICE_REPORT_TYPE_ENUM", oldEntity.getReportType()),
+                getEnumDescription("POLICE_REPORT_TYPE_ENUM", updateForm.getReportType())));
+        }
+
+        // 检查警情等级变更
+        if (updateForm.getReportLevel() != null && !Objects.equals(oldEntity.getReportLevel(), updateForm.getReportLevel())) {
+            changeLog.append(String.format("  • 警情等级：%s → %s\n",
+                getEnumDescription("POLICE_REPORT_LEVEL_ENUM", oldEntity.getReportLevel()),
+                getEnumDescription("POLICE_REPORT_LEVEL_ENUM", updateForm.getReportLevel())));
+        }
+
+        // 检查处理状态变更
+        if (updateForm.getStatus() != null && !Objects.equals(oldEntity.getStatus(), updateForm.getStatus())) {
+            changeLog.append(String.format("  • 处理状态：%s → %s\n",
+                getEnumDescription("POLICE_REPORT_STATUS_ENUM", oldEntity.getStatus()),
+                getEnumDescription("POLICE_REPORT_STATUS_ENUM", updateForm.getStatus())));
+        }
+
+        // 检查报警人姓名变更
+        if (updateForm.getReporterName() != null && !Objects.equals(oldEntity.getReporterName(), updateForm.getReporterName())) {
+            changeLog.append(String.format("  • 报警人姓名：%s → %s\n",
+                nullToEmpty(oldEntity.getReporterName()), updateForm.getReporterName()));
+        }
+
+        // 检查报警人电话变更
+        if (updateForm.getReporterPhone() != null && !Objects.equals(oldEntity.getReporterPhone(), updateForm.getReporterPhone())) {
+            changeLog.append(String.format("  • 报警人电话：%s → %s\n",
+                nullToEmpty(oldEntity.getReporterPhone()), updateForm.getReporterPhone()));
+        }
+
+        // 检查报警人身份证变更
+        if (updateForm.getReporterIdCard() != null && !Objects.equals(oldEntity.getReporterIdCard(), updateForm.getReporterIdCard())) {
+            changeLog.append(String.format("  • 报警人身份证：%s → %s\n",
+                nullToEmpty(oldEntity.getReporterIdCard()), updateForm.getReporterIdCard()));
+        }
+
+        // 检查事发地点变更
+        if (updateForm.getIncidentLocation() != null && !Objects.equals(oldEntity.getIncidentLocation(), updateForm.getIncidentLocation())) {
+            changeLog.append(String.format("  • 事发地点：%s → %s\n",
+                nullToEmpty(oldEntity.getIncidentLocation()), updateForm.getIncidentLocation()));
+        }
+
+        // 检查警情描述变更
+        if (updateForm.getDescription() != null && !Objects.equals(oldEntity.getDescription(), updateForm.getDescription())) {
+            changeLog.append(String.format("  • 警情描述：%s → %s\n",
+                truncateText(nullToEmpty(oldEntity.getDescription()), 50),
+                truncateText(updateForm.getDescription(), 50)));
+        }
+
+        // 检查处理结果变更
+        if (updateForm.getHandleResult() != null && !Objects.equals(oldEntity.getHandleResult(), updateForm.getHandleResult())) {
+            changeLog.append(String.format("  • 处理结果：%s → %s\n",
+                truncateText(nullToEmpty(oldEntity.getHandleResult()), 50),
+                truncateText(updateForm.getHandleResult(), 50)));
+        }
+
+        // 检查备注变更
+        if (updateForm.getRemark() != null && !Objects.equals(oldEntity.getRemark(), updateForm.getRemark())) {
+            changeLog.append(String.format("  • 备注：%s → %s\n",
+                truncateText(nullToEmpty(oldEntity.getRemark()), 50),
+                truncateText(updateForm.getRemark(), 50)));
+        }
+
+        // 检查专业字段变更
+        if (updateForm.getProfessionalFields() != null) {
+            changeLog.append("  • 专业字段：已更新\n");
+        }
+
+        return changeLog.toString();
+    }
+
+    /**
+     * 获取枚举描述
+     */
+    private String getEnumDescription(String enumType, Integer value) {
+        if (value == null) return "未设置";
+
+        // 这里可以根据实际的枚举映射来返回描述
+        switch (enumType) {
+            case "POLICE_REPORT_TYPE_ENUM":
+                return getReportTypeDescription(value);
+            case "POLICE_REPORT_LEVEL_ENUM":
+                return getReportLevelDescription(value);
+            case "POLICE_REPORT_STATUS_ENUM":
+                return getReportStatusDescription(value);
+            default:
+                return String.valueOf(value);
+        }
+    }
+
+    private String getReportTypeDescription(Integer type) {
+        if (type == null) return "未设置";
+        switch (type) {
+            case 1: return "火灾";
+            case 2: return "救援";
+            case 3: return "医疗";
+            case 4: return "交通";
+            case 5: return "治安";
+            default: return "其他(" + type + ")";
+        }
+    }
+
+    private String getReportLevelDescription(Integer level) {
+        if (level == null) return "未设置";
+        switch (level) {
+            case 1: return "紧急";
+            case 2: return "高";
+            case 3: return "中";
+            case 4: return "低";
+            default: return "未知(" + level + ")";
+        }
+    }
+
+    private String getReportStatusDescription(Integer status) {
+        if (status == null) return "未设置";
+        switch (status) {
+            case 1: return "待处理";
+            case 2: return "处理中";
+            case 3: return "已完成";
+            case 4: return "已关闭";
+            default: return "未知(" + status + ")";
+        }
+    }
+
+    private String nullToEmpty(String str) {
+        return str == null ? "未填写" : str;
+    }
+
+    private String truncateText(String text, int maxLength) {
+        if (text == null) return "";
+        return text.length() > maxLength ? text.substring(0, maxLength) + "..." : text;
+    }
+
     private Map<String, Object> buildChangeMap(PoliceReportEntity oldEntity, PoliceReportEntity newEntity) {
         Map<String, Object> changes = new HashMap<>();
 
@@ -808,5 +1192,95 @@ public class PoliceReportService {
         }
 
         return changes;
+    }
+
+    // ========== 轻量级数据版本检查 ==========
+
+    /**
+     * 检查数据版本 - 轻量级同步检查
+     */
+    public ResponseDTO<DataVersionVO> checkDataVersion(String clientVersion) {
+        try {
+            // 1. 获取最后更新时间（只查询时间字段，不查询完整数据）
+            Long lastUpdateTime = policeReportDao.getMaxUpdateTime();
+
+            // 2. 生成服务器端版本号（基于最后更新时间）
+            String serverVersion = generateVersionHash(lastUpdateTime);
+
+            // 3. 比较版本
+            boolean hasUpdates = !serverVersion.equals(clientVersion);
+
+            // 4. 构建轻量级响应
+            DataVersionVO versionVO = new DataVersionVO(serverVersion, lastUpdateTime);
+            versionVO.setHasUpdates(hasUpdates);
+
+            log.debug("🔍 [数据版本检查] 客户端版本: {}, 服务器版本: {}, 有更新: {}",
+                      clientVersion, serverVersion, hasUpdates);
+
+            return ResponseDTO.ok(versionVO);
+
+        } catch (Exception e) {
+            log.error("❌ [数据版本检查] 检查失败", e);
+            // 降级：返回有更新，让客户端刷新
+            DataVersionVO fallbackVO = new DataVersionVO("error", System.currentTimeMillis());
+            fallbackVO.setHasUpdates(true);
+            return ResponseDTO.ok(fallbackVO);
+        }
+    }
+
+    /**
+     * 检查数据版本 - 带分页信息
+     */
+    public ResponseDTO<DataVersionVO> checkDataVersionWithPage(String clientVersion, Integer pageNum, Integer pageSize) {
+        try {
+            // 1. 获取最后更新时间和总数（轻量级查询）
+            Long lastUpdateTime = policeReportDao.getMaxUpdateTime();
+            Long totalCount = policeReportDao.getTotalCount();
+
+            // 2. 生成版本号（包含分页信息）
+            String serverVersion = generateVersionHashWithPage(lastUpdateTime, totalCount, pageNum, pageSize);
+
+            // 3. 比较版本
+            boolean hasUpdates = !serverVersion.equals(clientVersion);
+
+            // 4. 构建响应
+            DataVersionVO versionVO = new DataVersionVO(serverVersion, lastUpdateTime, totalCount);
+            versionVO.setHasUpdates(hasUpdates);
+
+            log.debug("🔍 [数据版本检查-分页] 客户端版本: {}, 服务器版本: {}, 总数: {}, 有更新: {}",
+                      clientVersion, serverVersion, totalCount, hasUpdates);
+
+            return ResponseDTO.ok(versionVO);
+
+        } catch (Exception e) {
+            log.error("❌ [数据版本检查-分页] 检查失败", e);
+            // 降级：返回有更新
+            DataVersionVO fallbackVO = new DataVersionVO("error", System.currentTimeMillis());
+            fallbackVO.setHasUpdates(true);
+            return ResponseDTO.ok(fallbackVO);
+        }
+    }
+
+    /**
+     * 生成版本hash - 基于最后更新时间
+     */
+    private String generateVersionHash(Long lastUpdateTime) {
+        if (lastUpdateTime == null) {
+            return "empty";
+        }
+        // 简单的版本号生成策略：时间戳的hash
+        return String.valueOf(lastUpdateTime.hashCode());
+    }
+
+    /**
+     * 生成版本hash - 包含分页信息
+     */
+    private String generateVersionHashWithPage(Long lastUpdateTime, Long totalCount, Integer pageNum, Integer pageSize) {
+        if (lastUpdateTime == null) {
+            return "empty";
+        }
+        // 包含分页信息的版本号
+        String combined = lastUpdateTime + "_" + totalCount + "_" + pageNum + "_" + pageSize;
+        return String.valueOf(combined.hashCode());
     }
 }

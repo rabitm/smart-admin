@@ -63,4 +63,16 @@ public interface PoliceReportDao extends BaseMapper<PoliceReportEntity> {
      * 获取历史地址建议
      */
     List<String> getLocationSuggestions(@Param("keyword") String keyword, @Param("deletedFlag") Boolean deletedFlag);
+
+    // ========== 轻量级数据检查方法 ==========
+
+    /**
+     * 获取最后更新时间 - 轻量级查询
+     */
+    Long getMaxUpdateTime();
+
+    /**
+     * 获取总记录数 - 轻量级查询
+     */
+    Long getTotalCount();
 }

@@ -6,6 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import net.lab1024.sa.admin.constant.AdminSwaggerTagConst;
 import net.lab1024.sa.admin.module.business.oa.police.domain.form.CollaborationHistoryQueryForm;
 import net.lab1024.sa.admin.module.business.oa.police.domain.form.CollaborationOperationRecordForm;
+import net.lab1024.sa.admin.module.business.oa.police.domain.form.ComprehensiveOperationBatchForm;
 import net.lab1024.sa.admin.module.business.oa.police.domain.vo.CollaborationHistoryVO;
 import net.lab1024.sa.admin.module.business.oa.police.service.CollaborationHistoryService;
 import net.lab1024.sa.base.common.domain.PageResult;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.*;
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * 协作历史记录控制器
@@ -78,15 +80,58 @@ public class CollaborationHistoryController {
         }
     }
 
-    @Operation(summary = "获取操作统计信息")
-    @GetMapping("/statistics/{entityId}")
-    public ResponseDTO<Object> getStatistics(@PathVariable Long entityId) {
+    @Operation(summary = "批量记录操作")
+    @PostMapping("/batch-record")
+    public ResponseDTO<Boolean> batchRecordOperations(@RequestBody @Valid ComprehensiveOperationBatchForm batchForm,
+                                                     HttpServletRequest request) {
         try {
-            // TODO: 实现统计信息查询
-            return ResponseDTO.ok(new Object());
+            // 补充通用信息
+            String ipAddress = request.getRemoteAddr();
+            String userAgent = request.getHeader("User-Agent");
+
+            CompletableFuture<Boolean> future = collaborationHistoryService.batchRecordOperations(batchForm, ipAddress, userAgent);
+            boolean success = future.get(); // 等待异步操作完成
+            return ResponseDTO.ok(success);
         } catch (Exception e) {
-            log.error("获取统计信息失败: entityId={}, error={}", entityId, e.getMessage(), e);
+            log.error("批量记录操作失败: {}", e.getMessage(), e);
+            return ResponseDTO.userErrorParam("批量记录操作失败");
+        }
+    }
+
+    @Operation(summary = "获取操作统计信息")
+    @PostMapping("/statistics")
+    public ResponseDTO<Object> getStatistics(@RequestBody @Valid CollaborationHistoryQueryForm queryForm) {
+        try {
+            Object statistics = collaborationHistoryService.getOperationStatistics(queryForm);
+            return ResponseDTO.ok(statistics);
+        } catch (Exception e) {
+            log.error("获取统计信息失败: {}", e.getMessage(), e);
             return ResponseDTO.userErrorParam("获取统计信息失败");
+        }
+    }
+
+    @Operation(summary = "导出操作历史")
+    @PostMapping("/export")
+    public ResponseDTO<String> exportHistory(@RequestBody @Valid CollaborationHistoryQueryForm queryForm,
+                                           @RequestParam(defaultValue = "excel") String format) {
+        try {
+            String downloadUrl = collaborationHistoryService.exportOperationHistory(queryForm, format);
+            return ResponseDTO.ok(downloadUrl);
+        } catch (Exception e) {
+            log.error("导出操作历史失败: {}", e.getMessage(), e);
+            return ResponseDTO.userErrorParam("导出操作历史失败");
+        }
+    }
+
+    @Operation(summary = "检测异常操作")
+    @PostMapping("/detect-anomalies")
+    public ResponseDTO<Object> detectAnomalies(@RequestBody @Valid CollaborationHistoryQueryForm queryForm) {
+        try {
+            Object anomalies = collaborationHistoryService.detectAnomalies(queryForm);
+            return ResponseDTO.ok(anomalies);
+        } catch (Exception e) {
+            log.error("检测异常操作失败: {}", e.getMessage(), e);
+            return ResponseDTO.userErrorParam("检测异常操作失败");
         }
     }
 }

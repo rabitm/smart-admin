@@ -21,7 +21,10 @@
     </div>
 
     <div v-else>
-      <a-descriptions :column="2" bordered>
+      <!-- Tab页面 -->
+      <a-tabs v-model:activeKey="activeTab" type="card">
+        <a-tab-pane key="basic" tab="基本信息">
+          <a-descriptions :column="2" bordered>
         <a-descriptions-item label="警情编号">
           <a-tag color="blue">{{ detailData.reportNumber }}</a-tag>
         </a-descriptions-item>
@@ -57,26 +60,58 @@
         </a-descriptions-item>
         <a-descriptions-item label="创建人">{{ detailData.createUserName }}</a-descriptions-item>
         <a-descriptions-item label="创建时间">{{ detailData.createTime }}</a-descriptions-item>
-        <a-descriptions-item label="更新时间" :span="2">{{ detailData.updateTime }}</a-descriptions-item>
-      </a-descriptions>
+            <a-descriptions-item label="更新时间" :span="2">{{ detailData.updateTime }}</a-descriptions-item>
+          </a-descriptions>
 
-      <!-- 操作按钮区域 -->
-      <div class="operation-buttons" v-if="detailData.reportId">
-        <a-space>
-          <a-button @click="handleEdit" v-privilege="'oa:police:update'" type="primary">
-            <template #icon>
-              <EditOutlined />
-            </template>
-            编辑警情
-          </a-button>
-          <a-button @click="handleDelete" v-privilege="'oa:police:delete'" danger>
-            <template #icon>
-              <DeleteOutlined />
-            </template>
-            删除警情
-          </a-button>
-        </a-space>
-      </div>
+          <!-- 操作按钮区域 -->
+          <div class="operation-buttons" v-if="detailData.reportId">
+            <a-space>
+              <a-button @click="handleEdit" v-privilege="'oa:police:update'" type="primary">
+                <template #icon>
+                  <EditOutlined />
+                </template>
+                编辑警情
+              </a-button>
+              <a-button @click="handleDelete" v-privilege="'oa:police:delete'" danger>
+                <template #icon>
+                  <DeleteOutlined />
+                </template>
+                删除警情
+              </a-button>
+            </a-space>
+          </div>
+        </a-tab-pane>
+
+        <!-- 操作时间轴Tab -->
+        <a-tab-pane key="timeline" tab="操作历史">
+          <template #tab>
+            操作历史
+            <a-tooltip title="切换显示模式">
+              <a-switch
+                v-model:checked="useCompactTimeline"
+                size="small"
+                style="margin-left: 8px;"
+                checked-children="紧凑"
+                un-checked-children="详细"
+              />
+            </a-tooltip>
+          </template>
+
+          <!-- 紧凑型操作历史 -->
+          <CompactOperationHistory
+            v-if="useCompactTimeline && detailData.reportId"
+            :reportId="detailData.reportId"
+            :reportNumber="detailData.reportNumber"
+          />
+
+          <!-- 原始操作时间轴 -->
+          <PoliceOperationTimeline
+            v-else-if="detailData.reportId"
+            :reportId="detailData.reportId"
+            :reportNumber="detailData.reportNumber"
+          />
+        </a-tab-pane>
+      </a-tabs>
     </div>
 
     <!-- 编辑弹窗 -->
@@ -92,13 +127,17 @@
   import { policeReportApi } from '/@/api/business/oa/police-report-api';
   import { smartSentry } from '/@/lib/smart-sentry';
   import PoliceReportOperate from './components/police-report-operate-modal.vue';
+  import PoliceOperationTimeline from './components/police-operation-timeline.vue';
+  import CompactOperationHistory from './components/compact-operation-history.vue';
 
   const route = useRoute();
   const router = useRouter();
 
   const loading = ref(false);
   const detailData = ref({});
+  const activeTab = ref('basic');
   const operateRef = ref();
+  const useCompactTimeline = ref(true); // 默认使用紧凑模式
 
   const reportId = route.query.reportId;
 

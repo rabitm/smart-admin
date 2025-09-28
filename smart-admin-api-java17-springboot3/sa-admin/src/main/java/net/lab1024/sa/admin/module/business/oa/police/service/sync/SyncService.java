@@ -24,6 +24,20 @@ public interface SyncService {
                         String fieldName, String fieldValue, String operationType);
 
     /**
+     * 同步警情字段更新（包含旧值）
+     *
+     * @param reportId 警情ID
+     * @param userId 用户ID
+     * @param userName 用户名称
+     * @param fieldName 字段名称
+     * @param oldValue 旧值
+     * @param fieldValue 新值
+     * @param operationType 操作类型（UPDATE、DELETE等）
+     */
+    void syncFieldUpdate(Long reportId, Long userId, String userName,
+                        String fieldName, String oldValue, String fieldValue, String operationType);
+
+    /**
      * 同步字段编辑状态
      *
      * @param reportId 警情ID

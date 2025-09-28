@@ -80,12 +80,47 @@ export const policeReportApi = {
   },
 
   // 同步字段更新 @author Claude Code Assistant
-  syncFieldUpdate: (reportId, fieldName, fieldValue) => {
+  syncFieldUpdate: (reportId, fieldName, fieldValue, oldValue = null) => {
     const params = new URLSearchParams();
     params.append('fieldName', fieldName);
     if (fieldValue != null) {
       params.append('fieldValue', String(fieldValue));
     }
+    if (oldValue != null) {
+      params.append('oldValue', String(oldValue));
+    }
     return postRequest(`/oa/police/report/sync-field/${reportId}?${params}`);
   },
+
+  // ========== 轻量级数据同步检查 @author Claude Code Assistant ==========
+
+  /**
+   * 检查数据版本 - 轻量级同步检查
+   * @param clientVersion 客户端版本号
+   * @returns Promise<{data: {version: string, lastUpdateTime: number, hasUpdates: boolean}}>
+   */
+  checkDataVersion: (clientVersion = null) => {
+    const params = new URLSearchParams();
+    if (clientVersion) {
+      params.append('clientVersion', clientVersion);
+    }
+    return getRequest(`/oa/police/report/check-version?${params}`);
+  },
+
+  /**
+   * 检查数据版本 - 带分页信息
+   * @param clientVersion 客户端版本号
+   * @param pageNum 页码
+   * @param pageSize 页面大小
+   * @returns Promise<{data: {version: string, lastUpdateTime: number, totalCount: number, hasUpdates: boolean}}>
+   */
+  checkDataVersionWithPage: (clientVersion = null, pageNum = 1, pageSize = 20) => {
+    const params = new URLSearchParams();
+    if (clientVersion) {
+      params.append('clientVersion', clientVersion);
+    }
+    params.append('pageNum', pageNum.toString());
+    params.append('pageSize', pageSize.toString());
+    return getRequest(`/oa/police/report/check-version-with-page?${params}`);
+  }
 };

@@ -147,6 +147,15 @@ export class PoliceListUpdateManager {
   // WebSocket连接
   private wsClient: ReturnType<typeof getWebSocketClient> | null = null;
 
+  // 轮询定时器
+  private pollingTimer: NodeJS.Timeout | null = null;
+
+  // WebSocket重连定时器
+  private reconnectTimer: NodeJS.Timeout | null = null;
+
+  // 客户端数据版本号
+  private clientDataVersion: string | null = null;
+
   constructor(config?: Partial<PerformanceConfig>) {
     if (config) {
       this.config = { ...this.config, ...config };
@@ -187,16 +196,127 @@ export class PoliceListUpdateManager {
   }
 
   /**
-   * 初始化轮询模式（降级方案）
+   * 初始化轮询模式（降级方案）- 智能轮询，减少服务器压力
    */
   private initializePollingMode() {
-    console.log('🔄 [ListUpdateManager] 启动轮询模式作为降级方案');
+    console.log('🔄 [ListUpdateManager] 启动智能轮询降级方案');
 
-    // 每5秒轮询一次数据变化（降级方案）
-    setInterval(() => {
-      // 触发数据刷新事件
+    // 在任何环境下都应该避免无脑轮询，改为智能检测
+    console.log('🧠 [ListUpdateManager] 使用智能降级策略，避免定时轮询');
+
+    // ⚡ 新策略：不使用定时轮询，而是基于用户行为触发检查
+    this.initializeSmartFallback();
+  }
+
+  /**
+   * 智能降级策略 - 替代无脑轮询
+   */
+  private initializeSmartFallback() {
+    console.log('🎯 [ListUpdateManager] 启动智能降级策略');
+
+    // 1. 监听用户活动，活跃时才检查更新
+    let lastActivityTime = Date.now();
+    let activityCheckTimer: NodeJS.Timeout | null = null;
+
+    const updateLastActivity = () => {
+      lastActivityTime = Date.now();
+    };
+
+    // 监听用户活动事件
+    ['click', 'keydown', 'scroll', 'mousemove'].forEach(event => {
+      document.addEventListener(event, updateLastActivity, { passive: true });
+    });
+
+    // 2. 定期检查用户是否活跃，只有活跃用户才进行数据检查
+    activityCheckTimer = setInterval(() => {
+      const timeSinceLastActivity = Date.now() - lastActivityTime;
+
+      // 如果用户超过2分钟无活动，暂停检查
+      if (timeSinceLastActivity > 120000) {
+        console.log('😴 [ListUpdateManager] 用户无活动，暂停数据检查');
+        return;
+      }
+
+      // 如果页面不可见，也暂停检查
+      if (document.hidden) {
+        console.log('🔇 [ListUpdateManager] 页面不可见，暂停检查');
+        return;
+      }
+
+      // 3. 使用轻量级心跳检查替代全量查询
+      this.performLightweightCheck();
+    }, 60000); // 1分钟检查一次用户活跃度
+
+    // 保存定时器用于清理
+    this.pollingTimer = activityCheckTimer;
+
+    // 4. WebSocket重连机制
+    this.setupWebSocketReconnection();
+
+    console.log('✅ [ListUpdateManager] 智能降级策略已启动');
+  }
+
+  /**
+   * 轻量级数据检查 - 替代全量查询
+   */
+  private async performLightweightCheck() {
+    try {
+      console.log('🔍 [ListUpdateManager] 执行轻量级数据检查');
+
+      // 导入API
+      const { policeReportApi } = await import('/@/api/business/oa/police-report-api');
+
+      // 获取当前客户端版本（如果有的话）
+      const currentVersion = this.clientDataVersion || null;
+
+      // 调用轻量级版本检查API
+      const response = await policeReportApi.checkDataVersion(currentVersion);
+
+      if (response && response.data) {
+        const { version, hasUpdates, lastUpdateTime } = response.data;
+
+        console.log('💡 [ListUpdateManager] 版本检查结果:', {
+          clientVersion: currentVersion,
+          serverVersion: version,
+          hasUpdates,
+          lastUpdateTime
+        });
+
+        // 更新客户端版本
+        this.clientDataVersion = version;
+
+        // 如果有更新，触发数据刷新
+        if (hasUpdates) {
+          console.log('🔄 [ListUpdateManager] 检测到数据更新，触发刷新');
+          this.emitEvent('data_refresh_required');
+        } else {
+          console.log('✅ [ListUpdateManager] 数据无变化，跳过刷新');
+        }
+      } else {
+        console.warn('⚠️ [ListUpdateManager] 版本检查响应异常');
+      }
+
+    } catch (error) {
+      console.warn('⚠️ [ListUpdateManager] 轻量级检查失败:', error);
+      // 检查失败时，为了安全起见，触发一次刷新
       this.emitEvent('data_refresh_required');
-    }, 5000);
+    }
+  }
+
+  /**
+   * WebSocket重连机制
+   */
+  private setupWebSocketReconnection() {
+    // 定期尝试重新连接WebSocket
+    const reconnectTimer = setInterval(() => {
+      if (!this.wsClient || !this.wsClient.isConnected) {
+        console.log('🔄 [ListUpdateManager] 尝试重新连接WebSocket');
+        this.initializeWebSocket();
+      }
+    }, 30000); // 30秒尝试重连一次
+
+    // 保存重连定时器
+    this.reconnectTimer = reconnectTimer;
   }
 
   /**
@@ -707,6 +827,23 @@ export class PoliceListUpdateManager {
     if (this.memoryCleanupTimer) {
       clearInterval(this.memoryCleanupTimer);
     }
+
+    if (this.pollingTimer) {
+      clearInterval(this.pollingTimer);
+      this.pollingTimer = null;
+      console.log('🚫 [PoliceListUpdateManager] 轮询定时器已清理');
+    }
+
+    if (this.reconnectTimer) {
+      clearInterval(this.reconnectTimer);
+      this.reconnectTimer = null;
+      console.log('🚫 [PoliceListUpdateManager] 重连定时器已清理');
+    }
+
+    // 清理事件监听器
+    ['click', 'keydown', 'scroll', 'mousemove'].forEach(event => {
+      document.removeEventListener(event, () => {}, { passive: true } as any);
+    });
 
     console.log('📝 [PoliceListUpdateManager] 高性能更新管理器已销毁');
   }

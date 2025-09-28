@@ -162,6 +162,7 @@
       <!-- 操作列 -->
       <template #action="{ record }">
         <div class="smart-table-operate">
+          <a-button @click="detail(record.reportId)" size="small" v-privilege="'oa:police:query'" type="link">详情</a-button>
           <a-button @click="update(record.reportId)" size="small" v-privilege="'oa:police:update'" type="link">编辑</a-button>
           <a-button @click="confirmDelete(record.reportId)" size="small" danger v-privilege="'oa:police:delete'" type="link">删除</a-button>
         </div>

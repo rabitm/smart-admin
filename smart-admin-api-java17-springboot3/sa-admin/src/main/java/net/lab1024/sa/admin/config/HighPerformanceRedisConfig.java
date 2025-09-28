@@ -15,6 +15,8 @@ import org.springframework.data.redis.serializer.GenericJackson2JsonRedisSeriali
 import org.springframework.data.redis.serializer.RedisSerializationContext;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
 
+import jakarta.annotation.Resource;
+
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
@@ -39,25 +41,18 @@ import java.util.Map;
 @EnableCaching
 public class HighPerformanceRedisConfig {
 
-    /**
-     * 高性能连接池配置（支持500并发）
-     */
-    @Bean("policeConnectionFactory")
-    public RedisConnectionFactory policeConnectionFactory() {
-        // 这里需要根据实际Redis配置调整
-        // 示例：如果使用Lettuce连接池
-        log.info("🚀 [HighPerformanceRedis] 初始化高性能连接池配置");
-        return null; // 实际实现需要根据具体Redis配置
-    }
+    @Resource
+    private RedisConnectionFactory factory;
+
 
     /**
      * 高性能RedisTemplate（警情专用）
      * 优化序列化和连接池性能
      */
     @Bean("policeRedisTemplate")
-    public RedisTemplate<String, Object> policeRedisTemplate(RedisConnectionFactory connectionFactory) {
+    public RedisTemplate<String, Object> policeRedisTemplate() {
         RedisTemplate<String, Object> template = new RedisTemplate<>();
-        template.setConnectionFactory(connectionFactory);
+        template.setConnectionFactory(factory);
 
         // 使用String序列化器作为key序列化器
         StringRedisSerializer stringSerializer = new StringRedisSerializer();
@@ -84,9 +79,9 @@ public class HighPerformanceRedisConfig {
      * 列表专用RedisTemplate（优化列表操作）
      */
     @Bean
-    public RedisTemplate<String, Object> listRedisTemplate(RedisConnectionFactory connectionFactory) {
+    public RedisTemplate<String, Object> listRedisTemplate() {
         RedisTemplate<String, Object> template = new RedisTemplate<>();
-        template.setConnectionFactory(connectionFactory);
+        template.setConnectionFactory(factory);
 
         // 列表操作使用更快的序列化器
         StringRedisSerializer stringSerializer = new StringRedisSerializer();
@@ -107,7 +102,7 @@ public class HighPerformanceRedisConfig {
      * 高性能缓存管理器（警情专用）
      */
     @Bean("policeCacheManager")
-    public CacheManager policeCacheManager(RedisConnectionFactory connectionFactory) {
+    public CacheManager policeCacheManager() {
         // 默认缓存配置
         RedisCacheConfiguration defaultConfig = RedisCacheConfiguration.defaultCacheConfig()
                 .entryTtl(Duration.ofMinutes(30))  // 默认过期时间
@@ -129,7 +124,7 @@ public class HighPerformanceRedisConfig {
         // 用户信息缓存（长期缓存）
         cacheConfigs.put("user:info", defaultConfig.entryTtl(Duration.ofHours(1)));
 
-        RedisCacheManager cacheManager = RedisCacheManager.builder(connectionFactory)
+        RedisCacheManager cacheManager = RedisCacheManager.builder(factory)
                 .cacheDefaults(defaultConfig)
                 .withInitialCacheConfigurations(cacheConfigs)
                 .transactionAware()  // 事务感知
@@ -144,11 +139,10 @@ public class HighPerformanceRedisConfig {
      * 用于实时更新推送
      */
     @Bean
-    public RedisMessageListenerContainer redisMessageListenerContainer(
-            RedisConnectionFactory connectionFactory) {
+    public RedisMessageListenerContainer redisMessageListenerContainer() {
 
         RedisMessageListenerContainer container = new RedisMessageListenerContainer();
-        container.setConnectionFactory(connectionFactory);
+        container.setConnectionFactory(factory);
 
         // 设置线程池
         container.setTaskExecutor(java.util.concurrent.Executors.newFixedThreadPool(10));
