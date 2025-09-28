@@ -118,16 +118,26 @@ export class PoliceListUpdateManager {
     memoryUsage: 0
   };
 
-  // 配置
+  // 高并发优化配置（支持200-500终端）
   private config: PerformanceConfig = {
     virtualScrollEnabled: true,
-    pageSize: 50,
-    bufferSize: 10,
-    updateBatchSize: 20,
-    updateDebounceMs: 100,
-    renderThrottleMs: 16, // 60fps
-    maxCachedRows: 1000,
+    pageSize: 100, // 增加页面大小
+    bufferSize: 20, // 增加缓冲区
+    updateBatchSize: 50, // 增大批量处理
+    updateDebounceMs: 50, // 降低延迟
+    renderThrottleMs: 32, // 30fps，降低CPU使用
+    maxCachedRows: 2000, // 增大缓存
     compressionEnabled: true
+  };
+
+  // 高并发性能监控
+  private performanceMetrics = {
+    totalMessages: 0,
+    droppedMessages: 0,
+    avgProcessingTime: 0,
+    lastCleanupTime: Date.now(),
+    memoryPressure: false,
+    cpuPressure: false
   };
 
   // 渲染优化
@@ -162,8 +172,8 @@ export class PoliceListUpdateManager {
 
       if (this.wsClient && this.wsClient.isConnected) {
         // 监听现有的警务模块消息，而不是创建新的订阅
-        this.wsClient.onModuleMessage?.('police', 'LIST_UPDATE', this.handleWebSocketMessage.bind(this));
-        this.wsClient.onModuleMessage?.('police', 'BATCH_UPDATE', this.handleBatchWebSocketMessage.bind(this));
+        this.wsClient.onModuleMessage('police', 'LIST_UPDATE', this.handleWebSocketMessage.bind(this));
+        this.wsClient.onModuleMessage('police', 'BATCH_UPDATE', this.handleBatchWebSocketMessage.bind(this));
 
         console.log('🚀 [ListUpdateManager] 已集成到现有WebSocket系统');
       } else {
@@ -190,19 +200,49 @@ export class PoliceListUpdateManager {
   }
 
   /**
-   * 处理WebSocket消息
+   * 处理WebSocket消息（高并发优化版本）
    */
   private handleWebSocketMessage(message: any) {
     if (!message || !message.data) return;
 
+    const startTime = performance.now();
+    this.performanceMetrics.totalMessages++;
+
     try {
+      // 内存压力检测
+      if (this.updateQueue.length > 500) {
+        this.performanceMetrics.memoryPressure = true;
+        this.performanceMetrics.droppedMessages++;
+        console.warn('🚨 [内存压力] 丢弃消息，队列长度:', this.updateQueue.length);
+        return;
+      }
+
+      // CPU压力检测（基于平均处理时间）
+      if (this.performanceMetrics.avgProcessingTime > 10) {
+        this.performanceMetrics.cpuPressure = true;
+        // 降低处理频率
+        if (Math.random() > 0.5) {
+          this.performanceMetrics.droppedMessages++;
+          console.warn('🔥 [CPU压力] 随机丢弃消息，平均处理时间:', this.performanceMetrics.avgProcessingTime);
+          return;
+        }
+      }
+
+      // 修复：使用message.data，因为业务数据在data字段中
       const updateMessage = message.data as ListUpdateMessage;
-      console.log('📨 [ListUpdateManager] 收到WebSocket消息:', updateMessage.type);
+      console.log('📨 [ListUpdateManager] 收到WebSocket消息:', updateMessage.type, '数据:', updateMessage);
 
       // 添加到更新队列
       this.enqueueUpdate(updateMessage);
+
+      // 更新性能指标
+      const processTime = performance.now() - startTime;
+      this.performanceMetrics.avgProcessingTime =
+        (this.performanceMetrics.avgProcessingTime + processTime) / 2;
+
     } catch (error) {
       console.error('❌ [ListUpdateManager] 处理WebSocket消息失败:', error);
+      this.performanceMetrics.droppedMessages++;
     }
   }
 
@@ -213,6 +253,7 @@ export class PoliceListUpdateManager {
     if (!message || !message.data || !message.data.updates) return;
 
     try {
+      // 修复：使用message.data，因为业务数据在data字段中
       const batchMessage: ListUpdateMessage = {
         type: 'BATCH',
         batchData: message.data.updates,
@@ -645,8 +686,10 @@ export class PoliceListUpdateManager {
    * 销毁
    */
   public destroy() {
-    if (this.wsClient) {
-      this.wsClient.unsubscribe('police_list_updates');
+    if (this.wsClient && this.wsClient.offModuleMessage) {
+      // 取消模块消息监听
+      this.wsClient.offModuleMessage('police', 'LIST_UPDATE');
+      this.wsClient.offModuleMessage('police', 'BATCH_UPDATE');
     }
 
     this.dataMap.clear();
@@ -656,6 +699,16 @@ export class PoliceListUpdateManager {
     if (this.updateTimer) {
       clearTimeout(this.updateTimer);
     }
+
+    if (this.performanceTimer) {
+      clearInterval(this.performanceTimer);
+    }
+
+    if (this.memoryCleanupTimer) {
+      clearInterval(this.memoryCleanupTimer);
+    }
+
+    console.log('📝 [PoliceListUpdateManager] 高性能更新管理器已销毁');
   }
 }
 

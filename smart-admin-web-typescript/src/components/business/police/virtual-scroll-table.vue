@@ -8,32 +8,34 @@
 -->
 <template>
   <div class="virtual-scroll-table" ref="containerRef">
-    <!-- 表头 -->
-    <div class="table-header" :style="{ width: totalWidth + 'px' }">
-      <table>
-        <thead>
-          <tr>
-            <th
-              v-for="column in columns"
-              :key="column.key"
-              :style="{ width: column.width + 'px' }"
-              @click="handleSort(column)"
-            >
-              <div class="header-cell">
-                <span>{{ column.title }}</span>
-                <span v-if="column.sortable" class="sort-icon">
-                  <CaretUpOutlined
-                    :class="{ active: sortField === column.key && sortOrder === 'ascend' }"
-                  />
-                  <CaretDownOutlined
-                    :class="{ active: sortField === column.key && sortOrder === 'descend' }"
-                  />
-                </span>
-              </div>
-            </th>
-          </tr>
-        </thead>
-      </table>
+    <!-- 表头容器，支持水平滚动同步 -->
+    <div class="table-header-container" ref="headerRef">
+      <div class="table-header" :style="{ width: totalWidth + 'px' }">
+        <table>
+          <thead>
+            <tr>
+              <th
+                v-for="column in columns"
+                :key="column.key"
+                :style="{ width: column.width + 'px' }"
+                @click="handleSort(column)"
+              >
+                <div class="header-cell">
+                  <span>{{ column.title }}</span>
+                  <span v-if="column.sortable" class="sort-icon">
+                    <CaretUpOutlined
+                      :class="{ active: sortField === column.key && sortOrder === 'ascend' }"
+                    />
+                    <CaretDownOutlined
+                      :class="{ active: sortField === column.key && sortOrder === 'descend' }"
+                    />
+                  </span>
+                </div>
+              </th>
+            </tr>
+          </thead>
+        </table>
+      </div>
     </div>
 
     <!-- 虚拟滚动容器 -->
@@ -189,6 +191,7 @@ const emit = defineEmits<{
 // DOM引用
 const containerRef = ref<HTMLElement>();
 const scrollRef = ref<HTMLElement>();
+const headerRef = ref<HTMLElement>();
 
 // 滚动状态
 const scrollTop = ref(0);
@@ -245,6 +248,11 @@ let frameCount = 0;
 const handleScroll = throttle((event: Event) => {
   const target = event.target as HTMLElement;
   scrollTop.value = target.scrollTop;
+
+  // 同步水平滚动到表头
+  if (headerRef.value) {
+    headerRef.value.scrollLeft = target.scrollLeft;
+  }
 
   // 计算偏移量
   const { start } = visibleRange.value;
@@ -467,16 +475,30 @@ defineExpose({
   border: 1px solid #f0f0f0;
   border-radius: 4px;
 
-  .table-header {
+  .table-header-container {
+    overflow-x: auto;
+    overflow-y: hidden;
     position: sticky;
     top: 0;
     z-index: 10;
     background: white;
     border-bottom: 2px solid #f0f0f0;
 
+    /* 隐藏表头滚动条 */
+    &::-webkit-scrollbar {
+      display: none;
+    }
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* IE */
+  }
+
+  .table-header {
+    background: white;
+
     table {
       width: 100%;
       table-layout: fixed;
+      min-width: 100%; /* 确保表格最小宽度 */
     }
 
     th {
@@ -520,10 +542,11 @@ defineExpose({
   .scroll-container {
     position: relative;
     overflow-y: auto;
-    overflow-x: hidden;
+    overflow-x: auto; /* 允许水平滚动 */
 
     &::-webkit-scrollbar {
       width: 8px;
+      height: 8px; /* 添加水平滚动条高度 */
     }
 
     &::-webkit-scrollbar-track {
@@ -537,6 +560,11 @@ defineExpose({
       &:hover {
         background: #555;
       }
+    }
+
+    /* 水平滚动条样式 */
+    &::-webkit-scrollbar-horizontal {
+      height: 8px;
     }
   }
 

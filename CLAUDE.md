@@ -261,3 +261,448 @@ A critical fix was implemented to prevent professional field data loss during mu
 - Monitor WebSocket connection status in browser dev tools
 - Check user ID consistency across different authentication methods
 - Verify field state synchronization using Vue DevTools
+
+## Real-time Collaboration System Architecture & Development Guide
+
+### System Overview
+
+The SmartAdmin police emergency management system features a comprehensive real-time collaboration framework supporting 200-500 concurrent users with field-level editing, conflict resolution, and high-performance synchronization.
+
+### Core Architecture Components
+
+#### 1. Frontend Real-time Architecture
+
+**WebSocket Management Layer**:
+```typescript
+// Primary WebSocket client with unified messaging
+unified-websocket-client.ts           // Core WebSocket client implementation
+websocket-manager.ts                  // Connection pool and lifecycle management
+high-performance-websocket-pool.ts    // High-concurrency connection pooling (NEW)
+```
+
+**Collaboration Management Layer**:
+```typescript
+// Field-level collaboration
+field-collaboration-manager.ts        // Field locking and state management
+global-collaboration-manager.ts       // Global collaboration state coordination
+simple-field-lock-manager.ts         // Simplified field locking for basic use cases
+
+// List and data synchronization
+police-list-update-manager.ts         // High-performance list synchronization
+performance-monitor.ts                // Performance monitoring and degradation (NEW)
+```
+
+**Service Integration Layer**:
+```typescript
+// WebSocket service abstractions
+police-websocket.service.ts           // Police-specific WebSocket operations
+collaboration-websocket.service.ts    // Generic collaboration WebSocket services
+```
+
+#### 2. Backend Real-time Architecture
+
+**WebSocket Infrastructure**:
+```java
+// Core WebSocket configuration
+WebSocketConfig.java                  // Basic WebSocket setup
+HighPerformanceRedisConfig.java      // Optimized Redis configuration for high concurrency
+
+// Message handling and transport
+WebSocketMessage.java                 // Unified message structure
+WebSocketTransport.java              // Message transport layer
+WebSocketSessionManager.java         // Session lifecycle management
+```
+
+**Police-specific Services**:
+```java
+// High-performance list updates
+PoliceListUpdateService.java          // Optimized for 200-500 concurrent updates
+PoliceReportService.java             // Enhanced with batch processing
+PoliceWebSocketHandler.java          // Police-specific WebSocket message routing
+
+// Collaboration services
+SyncService.java                     // Field synchronization coordination
+WebSocketSyncServiceImpl.java       // WebSocket-based sync implementation
+```
+
+### Development Guidelines & Standards
+
+#### 1. WebSocket Message Standards
+
+**Message Structure**:
+```typescript
+interface WebSocketMessage {
+  messageId: string;              // Unique message identifier
+  type: string;                   // Message type (FIELD_EDIT, LIST_UPDATE, etc.)
+  module: string;                 // Module namespace (police, collaboration, system)
+  data: any;                      // Business payload
+  timestamp: string;              // ISO timestamp
+  fromUserId?: number;            // Sender user ID
+  fromUserName?: string;          // Sender user name
+}
+```
+
+**Business Message Types**:
+```typescript
+// Police module messages
+'FIELD_EDIT'          // Field editing operations
+'FIELD_FOCUS'         // Field focus events
+'FIELD_BLUR'          // Field blur events
+'LIST_UPDATE'         // List synchronization updates
+'REPORT_UPDATE'       // Report-level updates
+'USER_JOIN'           // User joining collaboration
+'USER_LEAVE'          // User leaving collaboration
+
+// System module messages
+'CONNECTED'           // Connection established
+'PING' / 'PONG'       // Heartbeat messages
+'SUBSCRIBE_ACK'       // Subscription confirmations
+'ERROR'               // Error notifications
+```
+
+#### 2. Field Collaboration Implementation Pattern
+
+**Frontend Field Collaboration Setup**:
+```typescript
+// 1. Initialize field collaboration manager
+const fieldCollaboration = useFieldCollaborationManager();
+
+// 2. Register field for collaboration
+const handleFieldFocus = (fieldName: string) => {
+  fieldCollaboration.onFieldFocus(fieldName, currentUser);
+};
+
+const handleFieldBlur = (fieldName: string) => {
+  fieldCollaboration.onFieldBlur(fieldName, currentUser);
+};
+
+const handleFieldEdit = (fieldName: string, value: any) => {
+  fieldCollaboration.onFieldEdit(fieldName, value, currentUser);
+};
+
+// 3. Listen for collaboration state changes
+fieldCollaboration.onFieldStateChange((fieldName, state) => {
+  // Update UI based on field collaboration state
+  updateFieldIndicators(fieldName, state);
+});
+```
+
+**Backend Field Sync Implementation**:
+```java
+// Service method for field synchronization
+@Async
+public void syncFieldUpdate(Long reportId, Long userId, String userName,
+                           String fieldName, String fieldValue, String operationType) {
+
+    // 1. Validate and sanitize input
+    if (reportId == null || StringUtils.isBlank(fieldName)) {
+        log.warn("Invalid sync request: reportId={}, fieldName={}", reportId, fieldName);
+        return;
+    }
+
+    // 2. Create update message
+    Map<String, Object> updateData = new HashMap<>();
+    updateData.put("reportId", reportId);
+    updateData.put("fieldName", fieldName);
+    updateData.put("fieldValue", fieldValue);
+    updateData.put("userId", userId);
+    updateData.put("userName", userName);
+    updateData.put("timestamp", System.currentTimeMillis());
+
+    // 3. Broadcast to all subscribers
+    webSocketTransport.broadcast("police", "FIELD_EDIT", updateData);
+
+    // 4. Update database (if needed)
+    if (shouldPersistField(fieldName)) {
+        updateDatabase(reportId, fieldName, fieldValue);
+    }
+}
+```
+
+#### 3. High-Performance List Synchronization
+
+**Frontend List Update Handler**:
+```typescript
+// Enhanced list update processing with performance optimizations
+const handleWebSocketListUpdate = (data: any) => {
+  switch (data.type) {
+    case 'UPDATE':
+      // Single field update
+      if (data.reportId && data.data) {
+        const fieldName = Object.keys(data.data)[0];
+        const fieldValue = Object.values(data.data)[0];
+
+        handleHighPerformanceFieldUpdate({
+          reportId: data.reportId,
+          fieldName,
+          fieldValue,
+          userName: data.userName || '其他用户'
+        });
+      }
+      break;
+
+    case 'BATCH':
+      // Batch updates - NEW: Enhanced for high concurrency
+      console.log('📦 [列表更新] 处理批量更新:', data);
+      handleWebSocketBatchUpdate(data);
+      break;
+
+    case 'INSERT':
+      // New record insertion
+      if (data.reportId && data.data) {
+        handleHighPerformanceRecordInsert({ record: data.data });
+      }
+      break;
+
+    case 'DELETE':
+      // Record deletion
+      if (data.reportId) {
+        handleHighPerformanceRecordDelete({ reportId: data.reportId });
+      }
+      break;
+  }
+};
+```
+
+**Backend High-Concurrency Broadcast**:
+```java
+// Optimized broadcast method for 200-500 concurrent users
+private void broadcastListUpdate(Map<String, Object> updateData) {
+    // Circuit breaker protection
+    if (circuitBreakerOpen) {
+        droppedUpdates.incrementAndGet();
+        log.warn("🔥 [熔断器] 广播被熔断器阻止，丢弃更新");
+        return;
+    }
+
+    Set<String> subscribers = listSubscribers.getOrDefault("all", new HashSet<>());
+    if (subscribers.isEmpty()) return;
+
+    // Rate limiting
+    if (!broadcastSemaphore.tryAcquire(10, TimeUnit.MILLISECONDS)) {
+        droppedUpdates.incrementAndGet();
+        log.warn("📊 [限流] 广播队列已满，丢弃更新");
+        return;
+    }
+
+    try {
+        // Batch subscribers into groups of 100 for parallel processing
+        List<List<String>> subscriberBatches = partition(new ArrayList<>(subscribers), 100);
+
+        // Parallel broadcast with timeout
+        List<CompletableFuture<Void>> batchTasks = subscriberBatches.stream()
+            .map(batch -> CompletableFuture.runAsync(() -> sendToBatch(batch, message), broadcastExecutor))
+            .collect(Collectors.toList());
+
+        int timeoutMs = Math.min(Math.max(subscribers.size() / 10, 50), 500);
+        CompletableFuture.allOf(batchTasks.toArray(new CompletableFuture[0]))
+            .orTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+            .get();
+
+    } finally {
+        broadcastSemaphore.release();
+    }
+}
+```
+
+#### 4. Performance Optimization Standards
+
+**Frontend Performance Guidelines**:
+```typescript
+// Use intelligent batching for field updates
+const batchSyncManager = {
+  pendingUpdates: new Map<string, any>(),
+  batchTimeout: 200, // 200ms batch interval
+
+  addUpdate(fieldName: string, fieldValue: any) {
+    this.pendingUpdates.set(fieldName, fieldValue);
+    this.scheduleBatchSync();
+  },
+
+  async processBatch() {
+    // Rate limiting check
+    const now = Date.now();
+    if (now - this.lastSyncTime < 100) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+    // Parallel processing with error handling
+    const promises = Array.from(this.pendingUpdates.entries()).map(async ([fieldName, fieldValue]) => {
+      try {
+        await policeReportApi.syncFieldUpdate(reportId, fieldName, fieldValue);
+      } catch (error) {
+        console.error(`❌ [批量同步] 字段 ${fieldName} 同步失败:`, error);
+        // Re-queue failed updates
+        this.pendingUpdates.set(fieldName, fieldValue);
+      }
+    });
+
+    await Promise.allSettled(promises);
+  }
+};
+```
+
+**Backend Performance Guidelines**:
+```java
+// Batch processing with automatic queue management
+private final Map<Long, Map<String, Object>> batchUpdateQueue = new ConcurrentHashMap<>();
+private static final int BATCH_INTERVAL_MS = 100;
+
+@Async
+public void processBatchUpdates(Long userId, String userName) {
+    Map<Long, Map<String, Object>> currentBatch = new HashMap<>(batchUpdateQueue);
+    batchUpdateQueue.clear();
+
+    // Parallel processing with timeout control
+    List<CompletableFuture<Void>> futures = currentBatch.entrySet().stream()
+        .map(entry -> CompletableFuture.runAsync(() -> {
+            processReportUpdate(entry.getKey(), entry.getValue(), userId, userName);
+        }))
+        .collect(Collectors.toList());
+
+    CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+        .orTimeout(5, TimeUnit.SECONDS)
+        .get();
+}
+```
+
+### Key File Locations & Responsibilities
+
+#### Frontend Files (TypeScript)
+```
+smart-admin-web-typescript/src/
+├── utils/
+│   ├── unified-websocket-client.ts           # Core WebSocket client
+│   ├── high-performance-websocket-pool.ts    # Connection pooling
+│   ├── police-list-update-manager.ts         # List synchronization
+│   ├── field-collaboration-manager.ts        # Field collaboration
+│   └── performance-monitor.ts                # Performance monitoring
+├── services/
+│   ├── police-websocket.service.ts           # Police WebSocket service
+│   └── collaboration-websocket.service.ts    # Collaboration service
+└── views/business/oa/police/
+    ├── emergency-intake.vue                  # Main emergency form
+    ├── police-report-list.vue               # High-performance list
+    └── components/
+        └── CollaborationFieldIndicator.vue   # Field collaboration UI
+```
+
+#### Backend Files (Java)
+```
+sa-admin/src/main/java/net/lab1024/sa/admin/
+├── config/
+│   └── HighPerformanceRedisConfig.java      # Optimized Redis config
+├── module/business/oa/police/
+│   ├── controller/PoliceReportController.java    # REST endpoints
+│   ├── service/
+│   │   ├── PoliceReportService.java          # Enhanced with batching
+│   │   ├── PoliceListUpdateService.java      # High-concurrency updates
+│   │   └── sync/SyncService.java             # Synchronization coordination
+│   └── websocket/PoliceWebSocketHandler.java     # WebSocket message routing
+└── module/support/websocket/
+    ├── WebSocketSessionManager.java          # Session management
+    └── service/impl/WebSocketTransport.java  # Message transport
+```
+
+### Development Workflow Standards
+
+#### 1. Adding Real-time Features
+```typescript
+// Step 1: Define message types
+export enum PoliceMessageType {
+  FIELD_EDIT = 'FIELD_EDIT',
+  USER_JOIN = 'USER_JOIN',
+  // ... other types
+}
+
+// Step 2: Implement frontend handler
+const handleNewMessageType = (message: WebSocketMessage) => {
+  // Process message
+  // Update UI state
+  // Emit events if needed
+};
+
+// Step 3: Register message handler
+wsClient.onModuleMessage('police', PoliceMessageType.FIELD_EDIT, handleNewMessageType);
+```
+
+```java
+// Step 4: Implement backend handler
+@Component
+public class CustomWebSocketHandler {
+
+    @EventListener
+    public void handleCustomMessage(WebSocketMessageEvent event) {
+        if ("CUSTOM_TYPE".equals(event.getType())) {
+            // Process message
+            // Update database if needed
+            // Broadcast to subscribers
+        }
+    }
+}
+```
+
+#### 2. Performance Testing Guidelines
+```typescript
+// Enable performance monitoring in development
+const monitor = getPerformanceMonitor();
+monitor.start();
+
+monitor.on('level_changed', (oldLevel, newLevel, step) => {
+  console.log(`🔄 性能级别变更: ${oldLevel} -> ${newLevel} (${step.name})`);
+});
+
+monitor.on('degradation_action', (action, level) => {
+  console.log(`📋 降级动作: ${action} (级别: ${level})`);
+});
+```
+
+#### 3. Error Handling Standards
+```typescript
+// Frontend error handling with retry logic
+const handleWebSocketError = async (error: Error, retryCount = 0) => {
+  console.error('❌ WebSocket错误:', error);
+
+  if (retryCount < 3) {
+    console.log(`🔄 重试连接 (${retryCount + 1}/3)`);
+    await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retryCount)));
+    return connectWebSocket().catch(err => handleWebSocketError(err, retryCount + 1));
+  }
+
+  // Fallback to polling mode
+  enablePollingFallback();
+};
+```
+
+```java
+// Backend error handling with circuit breaker
+@Async
+public void handleMessageWithCircuitBreaker(WebSocketMessage message) {
+    if (circuitBreakerOpen) {
+        log.warn("⚡ 熔断器开启，消息被丢弃");
+        return;
+    }
+
+    try {
+        processMessage(message);
+        resetCircuitBreakerCounter();
+    } catch (Exception e) {
+        log.error("❌ 消息处理失败", e);
+        incrementCircuitBreakerCounter();
+
+        if (getCircuitBreakerCounter() > THRESHOLD) {
+            openCircuitBreaker();
+        }
+    }
+}
+```
+
+### Important Implementation Notes
+
+1. **Always use modular WebSocket message handling**: Use `wsClient.onModuleMessage()` instead of direct event listeners
+2. **Implement proper cleanup**: Always clean up timers, listeners, and resources in component unmount handlers
+3. **Use batch processing**: Batch database operations and WebSocket broadcasts for high-concurrency scenarios
+4. **Monitor performance**: Implement performance monitoring for production deployments
+5. **Handle failures gracefully**: Use circuit breakers, retry logic, and fallback mechanisms
+6. **Test multi-user scenarios**: Always test collaboration features with multiple concurrent users
+7. **Follow the emoji logging convention**: Use emoji prefixes for easy log filtering and debugging

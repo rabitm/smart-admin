@@ -1,11 +1,11 @@
 package net.lab1024.sa.admin.module.business.oa.police.service;
 
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import net.lab1024.sa.admin.module.business.oa.police.domain.entity.PoliceReportEntity;
 import net.lab1024.sa.admin.module.support.websocket.domain.WebSocketMessage;
 import net.lab1024.sa.admin.module.support.websocket.service.WebSocketSessionManager;
 import net.lab1024.sa.admin.module.support.websocket.service.impl.WebSocketTransport;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -33,13 +33,23 @@ import java.util.stream.Collectors;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class PoliceListUpdateService {
 
     private final WebSocketSessionManager sessionManager;
     private final WebSocketTransport webSocketTransport;
     private final RedisTemplate<String, Object> redisTemplate;
     private final ThreadPoolExecutor broadcastExecutor;
+
+    public PoliceListUpdateService(
+            WebSocketSessionManager sessionManager,
+            WebSocketTransport webSocketTransport,
+            @Qualifier("policeRedisTemplate") RedisTemplate<String, Object> redisTemplate,
+            @Qualifier("webSocketBroadcastExecutor") ThreadPoolExecutor broadcastExecutor) {
+        this.sessionManager = sessionManager;
+        this.webSocketTransport = webSocketTransport;
+        this.redisTemplate = redisTemplate;
+        this.broadcastExecutor = broadcastExecutor;
+    }
 
     // 更新缓冲区
     private final Map<Long, UpdateBuffer> updateBuffers = new ConcurrentHashMap<>();
@@ -52,12 +62,20 @@ public class PoliceListUpdateService {
     private final AtomicInteger batchedUpdates = new AtomicInteger(0);
     private final AtomicInteger droppedUpdates = new AtomicInteger(0);
 
-    // 配置常量
-    private static final int BATCH_SIZE = 20;
-    private static final int BUFFER_TIME_MS = 100;
-    private static final int MAX_BUFFER_SIZE = 50;
+    // 高并发配置常量（针对200-500终端优化）
+    private static final int BATCH_SIZE = 50; // 增大批量大小
+    private static final int BUFFER_TIME_MS = 50; // 降低延迟
+    private static final int MAX_BUFFER_SIZE = 200; // 增大缓冲区
+    private static final int MAX_CONCURRENT_BROADCASTS = 100; // 最大并发广播数
+    private static final int CIRCUIT_BREAKER_THRESHOLD = 1000; // 熔断阈值
     private static final String REDIS_LIST_KEY_PREFIX = "police:list:";
     private static final String REDIS_UPDATE_CHANNEL = "police:list:updates";
+
+    // 并发控制和性能监控
+    private final Semaphore broadcastSemaphore = new Semaphore(MAX_CONCURRENT_BROADCASTS);
+    private final AtomicInteger activeBroadcasts = new AtomicInteger(0);
+    private final AtomicInteger circuitBreakerCounter = new AtomicInteger(0);
+    private volatile boolean circuitBreakerOpen = false;
 
     /**
      * 更新缓冲区
@@ -165,7 +183,7 @@ public class PoliceListUpdateService {
                 if (!updates.isEmpty()) {
                     // 创建批量消息
                     Map<String, Object> batchMessage = new HashMap<>();
-                    batchMessage.put("type", "BATCH_UPDATE");
+                    batchMessage.put("type", "BATCH");
                     batchMessage.put("updates", updates);
                     batchMessage.put("count", updates.size());
                     batchMessage.put("timestamp", System.currentTimeMillis());
@@ -206,9 +224,16 @@ public class PoliceListUpdateService {
     }
 
     /**
-     * 广播列表更新
+     * 广播列表更新（高并发优化版本）
      */
     private void broadcastListUpdate(Map<String, Object> updateData) {
+        // 熔断器检查
+        if (circuitBreakerOpen) {
+            droppedUpdates.incrementAndGet();
+            log.warn("🔥 [熔断器] 广播被熔断器阻止，丢弃更新");
+            return;
+        }
+
         // 获取所有订阅列表更新的会话
         Set<String> subscribers = listSubscribers.getOrDefault("all", new HashSet<>());
 
@@ -216,29 +241,88 @@ public class PoliceListUpdateService {
             return;
         }
 
-        // 创建WebSocket消息
-        WebSocketMessage message = WebSocketMessage.business("police", "LIST_UPDATE", updateData);
+        // 限流控制
+        try {
+            if (!broadcastSemaphore.tryAcquire(10, TimeUnit.MILLISECONDS)) {
+                droppedUpdates.incrementAndGet();
+                log.warn("📊 [限流] 广播队列已满，丢弃更新. 活跃广播数: {}", activeBroadcasts.get());
+                return;
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return;
+        }
 
-        // 并行广播到所有订阅者
-        List<CompletableFuture<Void>> sendTasks = subscribers.stream()
-            .map(sessionId -> CompletableFuture.runAsync(() -> {
-                try {
-                    webSocketTransport.sendToSession(sessionId, message);
-                } catch (Exception e) {
-                    log.debug("发送列表更新失败: sessionId={}", sessionId);
-                    // 移除失效的订阅者
-                    removeSubscriber(sessionId);
-                }
-            }, broadcastExecutor))
-            .collect(Collectors.toList());
+        int currentBroadcasts = activeBroadcasts.incrementAndGet();
+        long startTime = System.currentTimeMillis();
 
-        // 等待发送完成（最多100ms）
-        CompletableFuture.allOf(sendTasks.toArray(new CompletableFuture[0]))
-            .orTimeout(100, TimeUnit.MILLISECONDS)
-            .exceptionally(throwable -> {
-                log.debug("部分列表更新发送超时");
-                return null;
-            });
+        try {
+            // 创建WebSocket消息
+            WebSocketMessage message = WebSocketMessage.business("police", "LIST_UPDATE", updateData);
+
+            // 批量分组发送（每组最多100个会话）
+            List<List<String>> subscriberBatches = partition(new ArrayList<>(subscribers), 100);
+
+            List<CompletableFuture<Void>> batchTasks = subscriberBatches.stream()
+                .map(batch -> CompletableFuture.runAsync(() -> {
+                    sendToBatch(batch, message);
+                }, broadcastExecutor))
+                .collect(Collectors.toList());
+
+            // 等待发送完成（动态超时：基于订阅者数量）
+            int timeoutMs = Math.min(Math.max(subscribers.size() / 10, 50), 500);
+            CompletableFuture.allOf(batchTasks.toArray(new CompletableFuture[0]))
+                .orTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+                .exceptionally(throwable -> {
+                    log.warn("📡 [广播超时] 部分批次发送超时: {}ms, 订阅者数: {}", timeoutMs, subscribers.size());
+                    return null;
+                });
+
+            // 性能监控
+            long duration = System.currentTimeMillis() - startTime;
+            if (duration > 100) {
+                log.warn("🐌 [性能警告] 广播耗时过长: {}ms, 订阅者数: {}", duration, subscribers.size());
+                circuitBreakerCounter.incrementAndGet();
+            }
+
+            // 熔断器逻辑
+            if (circuitBreakerCounter.get() > CIRCUIT_BREAKER_THRESHOLD) {
+                circuitBreakerOpen = true;
+                log.error("⚡ [熔断器] 触发熔断，暂停广播 30秒");
+                // 30秒后重置熔断器
+                CompletableFuture.delayedExecutor(30, TimeUnit.SECONDS).execute(() -> {
+                    circuitBreakerOpen = false;
+                    circuitBreakerCounter.set(0);
+                    log.info("🔄 [熔断器] 熔断器已重置");
+                });
+            }
+
+        } finally {
+            activeBroadcasts.decrementAndGet();
+            broadcastSemaphore.release();
+        }
+    }
+
+    /**
+     * 批量发送到一组订阅者
+     */
+    private void sendToBatch(List<String> sessionIds, WebSocketMessage message) {
+        List<String> failedSessions = new ArrayList<>();
+
+        for (String sessionId : sessionIds) {
+            try {
+                webSocketTransport.sendToSession(sessionId, message);
+            } catch (Exception e) {
+                log.debug("💔 [会话失效] sessionId={}", sessionId);
+                failedSessions.add(sessionId);
+            }
+        }
+
+        // 批量移除失效会话
+        if (!failedSessions.isEmpty()) {
+            failedSessions.forEach(this::removeSubscriber);
+            log.info("🧹 [会话清理] 移除失效会话数: {}", failedSessions.size());
+        }
     }
 
     /**

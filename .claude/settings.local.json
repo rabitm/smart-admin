@@ -11,7 +11,10 @@
       "Bash(git config:*)",
       "Bash(netstat:*)",
       "Bash(taskkill:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "mcp__puppeteer__puppeteer_navigate",
+      "mcp__puppeteer__puppeteer_screenshot",
+      "mcp__puppeteer__puppeteer_fill"
     ],
     "deny": [],
     "ask": []

@@ -1,5 +1,7 @@
 package net.lab1024.sa.admin.module.system.login.domain;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import net.lab1024.sa.base.common.domain.RequestUser;
@@ -19,6 +21,7 @@ import java.io.Serializable;
  * @Copyright  <a href="https://1024lab.net">1024创新实验室</a>
  */
 @Data
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class RequestEmployee implements RequestUser, Serializable {
 
     @Schema(description = "员工id")
@@ -31,6 +34,7 @@ public class RequestEmployee implements RequestUser, Serializable {
     private String loginName;
 
     @Schema(description = "员工名称")
+    @JsonAlias("userName")
     private String actualName;
 
     @Schema(description = "头像")

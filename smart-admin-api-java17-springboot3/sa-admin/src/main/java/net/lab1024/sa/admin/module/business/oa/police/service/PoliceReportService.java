@@ -60,6 +60,9 @@ public class PoliceReportService {
     @Resource
     private SeatSyncService seatSyncService;
 
+    @Resource
+    private PoliceListUpdateService policeListUpdateService;
+
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /**
@@ -123,6 +126,10 @@ public class PoliceReportService {
             seatSyncService.notifyPoliceCaseUpdate(policeReportEntity.getReportId(), currentUserId, currentUserName, newData);
             // 发送列表刷新通知
             seatSyncService.notifyPoliceListRefresh(currentUserId, currentUserName, "新增了警情");
+
+            // 高性能列表实时更新通知
+            policeListUpdateService.handleReportInsert(policeReportEntity,
+                String.valueOf(currentUserId), currentUserName);
         } catch (Exception e) {
             log.error("发送警情新增实时通知失败", e);
         }
@@ -179,6 +186,11 @@ public class PoliceReportService {
             seatSyncService.notifyPoliceCaseUpdate(reportId, currentUserId, currentUserName, updatedData);
             // 发送列表刷新通知
             seatSyncService.notifyPoliceListRefresh(currentUserId, currentUserName, "更新了警情");
+
+            // 高性能列表实时更新通知
+            Map<String, Object> changes = buildChangeMap(oldPoliceReport, updateEntity);
+            policeListUpdateService.handleReportUpdate(reportId, changes,
+                String.valueOf(currentUserId), currentUserName);
         } catch (Exception e) {
             // 不因为同步失败而影响业务操作
             log.error("发送警情更新实时通知失败", e);
@@ -190,6 +202,11 @@ public class PoliceReportService {
     /**
      * 同步字段更新 - 重构版本
      */
+    // 高并发批量处理队列
+    private final Map<Long, Map<String, Object>> batchUpdateQueue = new ConcurrentHashMap<>();
+    private final AtomicLong lastBatchProcess = new AtomicLong(0);
+    private static final int BATCH_INTERVAL_MS = 100; // 100ms批量处理间隔
+
     public ResponseDTO<String> syncFieldUpdate(Long reportId, String fieldName, String fieldValue) {
         try {
             String currentUserName = SmartRequestUtil.getRequestUser() != null ?
@@ -197,16 +214,119 @@ public class PoliceReportService {
             Long currentUserId = SmartRequestUtil.getRequestUser() != null ?
                 SmartRequestUtil.getRequestUser().getUserId() : null;
 
-            log.info("字段同步请求: reportId={}, fieldName={}, userId={}", reportId, fieldName, currentUserId);
+            log.debug("字段同步请求: reportId={}, fieldName={}, userId={}", reportId, fieldName, currentUserId);
 
-            // 使用新的同步服务架构
-            syncService.syncFieldUpdate(reportId, currentUserId, currentUserName, fieldName, fieldValue, "FIELD_UPDATE");
+            // 添加到批量处理队列（高并发优化）
+            batchUpdateQueue.computeIfAbsent(reportId, k -> new ConcurrentHashMap<>())
+                .put(fieldName, fieldValue);
+
+            // 触发批量处理
+            scheduleBatchProcess(currentUserId, currentUserName);
 
             return ResponseDTO.ok();
         } catch (Exception e) {
             log.error("同步字段更新失败", e);
             return ResponseDTO.error(SystemErrorCode.SYSTEM_ERROR);
         }
+    }
+
+    /**
+     * 安排批量处理
+     */
+    private void scheduleBatchProcess(Long userId, String userName) {
+        long now = System.currentTimeMillis();
+        long lastProcess = lastBatchProcess.get();
+
+        // 如果距离上次处理超过间隔时间，立即处理
+        if (now - lastProcess > BATCH_INTERVAL_MS) {
+            if (lastBatchProcess.compareAndSet(lastProcess, now)) {
+                CompletableFuture.runAsync(() -> processBatchUpdates(userId, userName));
+            }
+        }
+    }
+
+    /**
+     * 处理批量更新
+     */
+    @Async
+    public void processBatchUpdates(Long userId, String userName) {
+        if (batchUpdateQueue.isEmpty()) {
+            return;
+        }
+
+        // 获取当前队列快照并清空
+        Map<Long, Map<String, Object>> currentBatch = new HashMap<>(batchUpdateQueue);
+        batchUpdateQueue.clear();
+
+        long startTime = System.currentTimeMillis();
+        int totalUpdates = currentBatch.values().stream()
+            .mapToInt(Map::size)
+            .sum();
+
+        log.info("🚀 [批量处理] 开始处理 {} 个报告的 {} 个字段更新", currentBatch.size(), totalUpdates);
+
+        try {
+            // 批量处理每个报告的更新
+            List<CompletableFuture<Void>> futures = currentBatch.entrySet().stream()
+                .map(entry -> CompletableFuture.runAsync(() -> {
+                    Long reportId = entry.getKey();
+                    Map<String, Object> changes = entry.getValue();
+
+                    try {
+                        // 同步字段更新
+                        changes.forEach((fieldName, fieldValue) -> {
+                            syncService.syncFieldUpdate(reportId, userId, userName,
+                                fieldName, String.valueOf(fieldValue), "FIELD_UPDATE");
+                        });
+
+                        // 检查是否包含关键字段，触发列表更新
+                        Map<String, Object> keyChanges = changes.entrySet().stream()
+                            .filter(e -> isKeyFieldForList(e.getKey()))
+                            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
+                        if (!keyChanges.isEmpty()) {
+                            policeListUpdateService.handleReportUpdate(reportId, keyChanges,
+                                String.valueOf(userId), userName);
+                        }
+
+                    } catch (Exception e) {
+                        log.error("❌ [批量处理] 处理报告更新失败: reportId={}", reportId, e);
+                    }
+                }))
+                .collect(Collectors.toList());
+
+            // 等待所有更新完成
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+                .orTimeout(5, TimeUnit.SECONDS)
+                .get();
+
+            long duration = System.currentTimeMillis() - startTime;
+            log.info("✅ [批量处理] 完成 {} 个更新，耗时 {}ms", totalUpdates, duration);
+
+            // 性能监控
+            if (duration > 2000) {
+                log.warn("🐌 [性能警告] 批量处理耗时过长: {}ms", duration);
+            }
+
+        } catch (Exception e) {
+            log.error("❌ [批量处理] 批量处理失败", e);
+        }
+    }
+
+    /**
+     * 判断是否是影响列表显示的关键字段
+     */
+    private boolean isKeyFieldForList(String fieldName) {
+        return fieldName != null && (
+            fieldName.equals("reportType") ||
+            fieldName.equals("reportLevel") ||
+            fieldName.equals("status") ||
+            fieldName.equals("reporterName") ||
+            fieldName.equals("reporterPhone") ||
+            fieldName.equals("incidentLocation") ||
+            fieldName.equals("description") ||
+            fieldName.equals("handlerName")
+        );
     }
 
     /**
@@ -247,6 +367,10 @@ public class PoliceReportService {
             Long currentUserId = SmartRequestUtil.getRequestUser() != null ?
                 SmartRequestUtil.getRequestUser().getUserId() : null;
             seatSyncService.notifyPoliceListRefresh(currentUserId, currentUserName, "删除了警情");
+
+            // 高性能列表实时更新通知
+            policeListUpdateService.handleReportDelete(reportId,
+                String.valueOf(currentUserId), currentUserName);
         } catch (Exception e) {
             log.error("发送警情删除通知失败", e);
         }
@@ -647,5 +771,42 @@ public class PoliceReportService {
             log.error("获取专业字段统计数据失败: fieldKey={}, reportType={}", fieldKey, reportType, e);
             return ResponseDTO.ok(new ArrayList<>());
         }
+    }
+
+    /**
+     * 构建变更数据映射
+     */
+    private Map<String, Object> buildChangeMap(PoliceReportEntity oldEntity, PoliceReportEntity newEntity) {
+        Map<String, Object> changes = new HashMap<>();
+
+        if (newEntity.getReportType() != null && !Objects.equals(oldEntity.getReportType(), newEntity.getReportType())) {
+            changes.put("reportType", newEntity.getReportType());
+        }
+        if (newEntity.getReportLevel() != null && !Objects.equals(oldEntity.getReportLevel(), newEntity.getReportLevel())) {
+            changes.put("reportLevel", newEntity.getReportLevel());
+        }
+        if (newEntity.getStatus() != null && !Objects.equals(oldEntity.getStatus(), newEntity.getStatus())) {
+            changes.put("status", newEntity.getStatus());
+        }
+        if (newEntity.getReporterName() != null && !Objects.equals(oldEntity.getReporterName(), newEntity.getReporterName())) {
+            changes.put("reporterName", newEntity.getReporterName());
+        }
+        if (newEntity.getReporterPhone() != null && !Objects.equals(oldEntity.getReporterPhone(), newEntity.getReporterPhone())) {
+            changes.put("reporterPhone", newEntity.getReporterPhone());
+        }
+        if (newEntity.getIncidentLocation() != null && !Objects.equals(oldEntity.getIncidentLocation(), newEntity.getIncidentLocation())) {
+            changes.put("incidentLocation", newEntity.getIncidentLocation());
+        }
+        if (newEntity.getDescription() != null && !Objects.equals(oldEntity.getDescription(), newEntity.getDescription())) {
+            changes.put("description", newEntity.getDescription());
+        }
+        if (newEntity.getHandlerName() != null && !Objects.equals(oldEntity.getHandlerName(), newEntity.getHandlerName())) {
+            changes.put("handlerName", newEntity.getHandlerName());
+        }
+        if (newEntity.getHandlerId() != null && !Objects.equals(oldEntity.getHandlerId(), newEntity.getHandlerId())) {
+            changes.put("handlerId", newEntity.getHandlerId());
+        }
+
+        return changes;
     }
 }

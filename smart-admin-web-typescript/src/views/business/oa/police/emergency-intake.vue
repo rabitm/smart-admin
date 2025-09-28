@@ -1461,6 +1461,89 @@
   console.log('📋 [Form Debug] formData对象初始化:', formData);
 
   // 同步字段更新（使用新的同步管理器）
+  // 防抖定时器映射
+  const fieldSyncDebounce = new Map<string, NodeJS.Timeout>();
+
+  // 高性能批量同步管理器
+  const batchSyncManager = {
+    pendingUpdates: new Map<string, any>(),
+    maxBatchSize: 10,
+    batchTimeout: 200, // 200ms批量发送
+    batchTimer: null as NodeJS.Timeout | null,
+    lastSyncTime: 0,
+    syncInProgress: false,
+
+    addUpdate(fieldName: string, fieldValue: any) {
+      this.pendingUpdates.set(fieldName, fieldValue);
+      this.scheduleBatchSync();
+    },
+
+    scheduleBatchSync() {
+      if (this.batchTimer) {
+        clearTimeout(this.batchTimer);
+      }
+
+      this.batchTimer = setTimeout(() => {
+        this.processBatch();
+      }, this.batchTimeout);
+    },
+
+    async processBatch() {
+      if (this.syncInProgress || this.pendingUpdates.size === 0) {
+        return;
+      }
+
+      this.syncInProgress = true;
+      const updates = new Map(this.pendingUpdates);
+      this.pendingUpdates.clear();
+
+      try {
+        // 检查是否需要限流
+        const now = Date.now();
+        if (now - this.lastSyncTime < 100) {
+          console.log('🔄 [批量同步] 限流中，延迟处理');
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+
+        console.log('📦 [批量同步] 开始处理批量更新:', updates.size, '个字段');
+
+        // 批量处理更新
+        const promises = Array.from(updates.entries()).map(async ([fieldName, fieldValue]) => {
+          try {
+            await policeReportApi.syncFieldUpdate(editReportId.value, fieldName, fieldValue);
+            console.log(`✅ [批量同步] 字段 ${fieldName} 同步成功`);
+          } catch (error) {
+            console.error(`❌ [批量同步] 字段 ${fieldName} 同步失败:`, error);
+            // 失败的字段重新加入队列
+            this.pendingUpdates.set(fieldName, fieldValue);
+          }
+        });
+
+        await Promise.allSettled(promises);
+        this.lastSyncTime = Date.now();
+
+        console.log('🎯 [批量同步] 批量处理完成');
+
+        // 如果还有待处理的更新，继续处理
+        if (this.pendingUpdates.size > 0) {
+          this.scheduleBatchSync();
+        }
+
+      } finally {
+        this.syncInProgress = false;
+      }
+    },
+
+    clear() {
+      if (this.batchTimer) {
+        clearTimeout(this.batchTimer);
+        this.batchTimer = null;
+      }
+      this.pendingUpdates.clear();
+      this.syncInProgress = false;
+    }
+  };
+
   function syncFieldUpdate(fieldName: string, fieldValue: any, oldValue?: any) {
     if (!isEditMode.value || !editReportId.value) {
       console.log('🔍 [Sync Debug] 跳过同步 - 非编辑模式或无报告ID');
@@ -1502,6 +1585,16 @@
       dataSize: JSON.stringify(fieldValue).length,
       dependencies: []
     }, priority);
+
+    // ✨ 关键修复：使用高性能批量同步管理器
+    console.log('📡 [Field Sync Debug] 添加到批量同步队列:', {
+      reportId: editReportId.value,
+      fieldName,
+      fieldValue
+    });
+
+    // 使用批量同步管理器（高并发优化）
+    batchSyncManager.addUpdate(fieldName, fieldValue);
   }
 
 
@@ -3277,6 +3370,13 @@
       clearTimeout(syncDebounceTimer);
       syncDebounceTimer = null;
     }
+
+    // 清理字段同步防抖定时器
+    fieldSyncDebounce.forEach((timer) => clearTimeout(timer));
+    fieldSyncDebounce.clear();
+
+    // 清理批量同步管理器
+    batchSyncManager.clear();
   });
 
   // 协作相关函数

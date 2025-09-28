@@ -2,6 +2,7 @@ package net.lab1024.sa.admin.module.business.oa.police.websocket;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import net.lab1024.sa.admin.module.business.oa.police.service.PoliceListUpdateService;
 import net.lab1024.sa.admin.module.support.websocket.domain.WebSocketMessage;
 import net.lab1024.sa.admin.module.support.websocket.domain.WebSocketSession;
 import net.lab1024.sa.admin.module.support.websocket.handler.UnifiedWebSocketHandler;
@@ -40,17 +41,20 @@ public class PoliceWebSocketHandler implements UnifiedWebSocketHandler.MessageHa
     private final WebSocketSessionManager sessionManager;
     private final WebSocketTransport webSocketTransport;
     private final ThreadPoolExecutor broadcastExecutor;
+    private final PoliceListUpdateService policeListUpdateService;
 
     public PoliceWebSocketHandler(
         UnifiedWebSocketHandler unifiedWebSocketHandler,
         WebSocketSessionManager sessionManager,
         WebSocketTransport webSocketTransport,
-        @Qualifier("webSocketBroadcastExecutor") ThreadPoolExecutor broadcastExecutor
+        @Qualifier("webSocketBroadcastExecutor") ThreadPoolExecutor broadcastExecutor,
+        PoliceListUpdateService policeListUpdateService
     ) {
         this.unifiedWebSocketHandler = unifiedWebSocketHandler;
         this.sessionManager = sessionManager;
         this.webSocketTransport = webSocketTransport;
         this.broadcastExecutor = broadcastExecutor;
+        this.policeListUpdateService = policeListUpdateService;
     }
 
     @PostConstruct
@@ -89,6 +93,12 @@ public class PoliceWebSocketHandler implements UnifiedWebSocketHandler.MessageHa
                 break;
             case "UNLOCK_REPORT":
                 handleUnlockReport(sessionId, message, data);
+                break;
+            case "SUBSCRIBE_LIST_UPDATES":
+                handleSubscribeListUpdates(sessionId, message, data);
+                break;
+            case "UNSUBSCRIBE_LIST_UPDATES":
+                handleUnsubscribeListUpdates(sessionId, message, data);
                 break;
             default:
                 log.warn("未知的警务消息类型: {}", type);
@@ -418,5 +428,53 @@ public class PoliceWebSocketHandler implements UnifiedWebSocketHandler.MessageHa
     private WebSocketMessage createBatchMessage(List<WebSocketMessage> messages) {
         return WebSocketMessage.business("police", "BATCH_MESSAGES",
             Map.of("messages", messages));
+    }
+
+    /**
+     * 处理订阅列表更新
+     */
+    private void handleSubscribeListUpdates(String sessionId, WebSocketMessage message, Map<String, Object> data) {
+        try {
+            // 订阅列表更新
+            policeListUpdateService.subscribeListUpdates(sessionId);
+
+            // 发送订阅确认
+            Map<String, Object> confirmData = Map.of(
+                "subscribed", true,
+                "sessionId", sessionId,
+                "timestamp", System.currentTimeMillis()
+            );
+
+            WebSocketMessage confirmMessage = WebSocketMessage.business("police", "SUBSCRIPTION_CONFIRMED", confirmData);
+            webSocketTransport.sendToSession(sessionId, confirmMessage);
+
+            log.info("会话{}已订阅列表更新", sessionId);
+        } catch (Exception e) {
+            log.error("处理列表更新订阅失败", e);
+        }
+    }
+
+    /**
+     * 处理取消订阅列表更新
+     */
+    private void handleUnsubscribeListUpdates(String sessionId, WebSocketMessage message, Map<String, Object> data) {
+        try {
+            // 取消订阅列表更新
+            policeListUpdateService.unsubscribeListUpdates(sessionId);
+
+            // 发送取消订阅确认
+            Map<String, Object> confirmData = Map.of(
+                "unsubscribed", true,
+                "sessionId", sessionId,
+                "timestamp", System.currentTimeMillis()
+            );
+
+            WebSocketMessage confirmMessage = WebSocketMessage.business("police", "UNSUBSCRIPTION_CONFIRMED", confirmData);
+            webSocketTransport.sendToSession(sessionId, confirmMessage);
+
+            log.info("会话{}已取消订阅列表更新", sessionId);
+        } catch (Exception e) {
+            log.error("处理取消列表更新订阅失败", e);
+        }
     }
 }

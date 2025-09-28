@@ -729,14 +729,20 @@
   onMounted(() => {
     ajaxQuery();
 
-    // 初始化高性能列表更新管理器
+    // 直接初始化WebSocket监听（简化版本）
+    try {
+      fallbackToLegacyWebSocket();
+      console.log('🚀 [警情列表] WebSocket实时同步已启动');
+    } catch (error) {
+      console.error('❌ [警情列表] 启动WebSocket实时同步失败:', error);
+    }
+
+    // 初始化高性能列表更新管理器（作为补充）
     try {
       initializeListUpdateManager();
       console.log('🚀 [警情列表] 高性能更新系统已启动');
     } catch (error) {
       console.error('❌ [警情列表] 启动高性能更新系统失败:', error);
-      // 降级到传统WebSocket监听
-      fallbackToLegacyWebSocket();
     }
   });
 
@@ -749,12 +755,16 @@
       console.error('清理高性能更新系统失败:', error);
     }
 
-    // 清理传统WebSocket监听（如果有）
+    // 清理WebSocket监听（如果有）
     if (wsClient) {
+      // 清理模块消息监听器
+      wsClient.offModuleMessage('police', 'LIST_UPDATE');
+      wsClient.offModuleMessage('police', 'BATCH_UPDATE');
+      // 清理传统监听器
       wsClient.off('POLICE_CASE_UPDATE');
       wsClient.off('POLICE_CASE_FIELD_SYNC');
       wsClient.off('POLICE_LIST_REFRESH');
-      console.log('🔥 [警情列表] 传统WebSocket监听已清理');
+      console.log('🔥 [警情列表] WebSocket监听已清理');
     }
   });
 
@@ -762,6 +772,26 @@
   const fallbackToLegacyWebSocket = () => {
     try {
       wsClient = getWebSocketClient();
+
+      // 监听高性能列表更新消息（修复：使用正确的模块消息监听方式）
+      wsClient.onModuleMessage('police', 'LIST_UPDATE', (message: any) => {
+        console.log('📡 [警情列表] 收到列表更新消息:', message);
+        // 修复：使用message.data，因为业务数据在data字段中
+        if (message && message.data) {
+          handleWebSocketListUpdate(message.data);
+        }
+      });
+
+      // 监听批量更新消息（修复：使用正确的模块消息监听方式）
+      wsClient.onModuleMessage('police', 'BATCH_UPDATE', (message: any) => {
+        console.log('📦 [警情列表] 收到批量更新消息:', message);
+        // 修复：使用message.data，因为业务数据在data字段中
+        if (message && message.data && message.data.updates) {
+          handleWebSocketBatchUpdate(message.data);
+        }
+      });
+
+      // 监听传统的警情更新消息（兼容性）
       wsClient.on('POLICE_CASE_UPDATE', (data: any) => {
         console.log('📡 [Legacy WebSocket] 收到更新:', data);
         // 转换为高性能格式处理
@@ -774,9 +804,115 @@
           });
         }
       });
-      console.log('⚠️ [警情列表] 已降级到传统WebSocket模式');
+
+      // 发送订阅列表更新请求
+      const subscribeMessage = {
+        module: 'police',
+        type: 'SUBSCRIBE_LIST_UPDATES',
+        data: {
+          timestamp: Date.now()
+        }
+      };
+      wsClient.send(subscribeMessage);
+
+      console.log('⚠️ [警情列表] 已降级到传统WebSocket模式并发送订阅请求');
     } catch (error) {
       console.error('❌ [警情列表] 传统WebSocket初始化也失败:', error);
+    }
+  };
+
+  // 处理WebSocket列表更新消息
+  const handleWebSocketListUpdate = (data: any) => {
+    console.log('🔍 [WebSocket列表更新] 处理消息:', {
+      type: data.type,
+      reportId: data.reportId,
+      data: data.data,
+      hasData: !!data.data,
+      dataKeys: data.data ? Object.keys(data.data) : [],
+      fields: data.fields,
+      version: data.version,
+      timestamp: data.timestamp,
+      message: data
+    });
+
+    switch (data.type) {
+      case 'UPDATE':
+        if (data.reportId && data.data) {
+          const fieldName = Object.keys(data.data)[0] || 'unknown';
+          const fieldValue = Object.values(data.data)[0];
+
+          console.log('⚡ [列表更新] 处理字段更新:', {
+            reportId: data.reportId,
+            fieldName,
+            fieldValue,
+            userName: data.userName || '其他用户'
+          });
+
+          handleHighPerformanceFieldUpdate({
+            reportId: data.reportId,
+            fieldName,
+            fieldValue,
+            userName: data.userName || '其他用户'
+          });
+        } else {
+          console.warn('⚠️ [列表更新] UPDATE消息缺少必要数据:', data);
+        }
+        break;
+      case 'INSERT':
+        if (data.reportId && data.data) {
+          console.log('✨ [列表更新] 处理记录插入:', data);
+          handleHighPerformanceRecordInsert({
+            record: data.data
+          });
+        } else {
+          console.warn('⚠️ [列表更新] INSERT消息缺少必要数据:', data);
+        }
+        break;
+      case 'DELETE':
+        if (data.reportId) {
+          console.log('🗑️ [列表更新] 处理记录删除:', data.reportId);
+          handleHighPerformanceRecordDelete({
+            reportId: data.reportId
+          });
+        } else {
+          console.warn('⚠️ [列表更新] DELETE消息缺少reportId:', data);
+        }
+        break;
+      case 'BATCH':
+        console.log('📦 [列表更新] 处理批量更新:', data);
+        handleWebSocketBatchUpdate(data);
+        break;
+      default:
+        console.warn('⚠️ [列表更新] 未知消息类型:', data.type, data);
+    }
+  };
+
+  // 处理WebSocket批量更新消息
+  const handleWebSocketBatchUpdate = (data: any) => {
+    if (data.updates && Array.isArray(data.updates)) {
+      // 将每个更新中的多个字段展开为单独的更新项
+      const expandedUpdates: any[] = [];
+
+      data.updates.forEach((update: any) => {
+        if (update.data && typeof update.data === 'object') {
+          // 为每个字段创建一个单独的更新
+          Object.entries(update.data).forEach(([fieldName, fieldValue]) => {
+            expandedUpdates.push({
+              reportId: update.reportId,
+              fieldName: fieldName,
+              fieldValue: fieldValue
+            });
+          });
+        }
+      });
+
+      console.log('📦 [批量更新] 展开后的更新项:', expandedUpdates);
+
+      if (expandedUpdates.length > 0) {
+        handleHighPerformanceBatchUpdate({
+          updates: expandedUpdates
+        });
+      }
     }
   };
 </script>
