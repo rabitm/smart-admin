@@ -64,10 +64,6 @@
           协作
         </a-button>
 
-        <a-button @click="toggleHistoryPanel" size="small">
-          <template #icon>📊</template>
-          时间轴
-        </a-button>
 
         <a-button @click="createTestConflict" size="large" v-if="isDevelopment">
           <template #icon>⚔️</template>
@@ -127,20 +123,6 @@
       />
     </div>
 
-    <!-- Step 4: EnhancedOperationTimeline (✅ 正常) -->
-    <div v-if="showHistoryPanel" class="timeline-panel">
-      <EnhancedOperationTimeline
-        ref="operationTimelineRef"
-        :operations="operationHistory"
-        :current-user="currentUser"
-        :auto-refresh="true"
-        :show-filters="true"
-        :enable-rollback="true"
-        @operation-rollback="handleOperationRollback"
-        @operation-export="handleOperationExport"
-        @view-change="handleTimelineViewChange"
-      />
-    </div>
 
     <!-- Step 5: 统一协作管理器 -->
     <!-- UnifiedCollaborationManager 已移除以避免遮挡主界面 -->
@@ -281,29 +263,33 @@
 
       <!-- 右侧：专业信息录入 -->
       <div class="right-panel">
-        <h3 class="section-title">
-          <span class="section-icon" :style="{ color: typeColor }">{{ typeIcon }}</span>
-          {{ typeName }} 专业信息
-        </h3>
+        <!-- 上半部分：专业信息录入 -->
+        <div class="professional-section">
+          <h3 class="section-title">
+            <span class="section-icon" :style="{ color: typeColor }">{{ typeIcon }}</span>
+            {{ typeName }} 专业信息
+          </h3>
 
-        <!-- 配置加载状态 -->
-        <div v-if="configLoading" class="config-loading">
-          <div class="loading-icon">⏳</div>
-          <div class="loading-text">正在加载表单配置...</div>
+          <!-- 配置加载状态 -->
+          <div v-if="configLoading" class="config-loading">
+            <div class="loading-icon">⏳</div>
+            <div class="loading-text">正在加载表单配置...</div>
+          </div>
+
+          <PoliceProfessionalFields
+            v-if="professionalFields.length > 0"
+            :fields="professionalFields"
+            :modelValue="professionalFieldData"
+            @update:modelValue="handleProfessionalFieldUpdate"
+          />
+
+          <div v-else class="no-professional-fields">
+            <div class="placeholder-icon">📝</div>
+            <div class="placeholder-text">{{ typeName }} 无需额外专业信息</div>
+            <div class="placeholder-desc">请完善左侧基础信息后提交</div>
+          </div>
         </div>
 
-        <PoliceProfessionalFields
-          v-if="professionalFields.length > 0"
-          :fields="professionalFields"
-          :modelValue="professionalFieldData"
-          @update:modelValue="handleProfessionalFieldUpdate"
-        />
-
-        <div v-else class="no-professional-fields">
-          <div class="placeholder-icon">📝</div>
-          <div class="placeholder-text">{{ typeName }} 无需额外专业信息</div>
-          <div class="placeholder-desc">请完善左侧基础信息后提交</div>
-        </div>
       </div>
 
       <!-- 空状态 - 临时注释掉 -->
@@ -373,7 +359,6 @@
     OfflineStatusIndicator
   } from '/@/components/business/collaboration';
   import OptimizedCollaborationManager from '/@/components/business/collaboration/OptimizedCollaborationManager.vue';
-  import EnhancedOperationTimeline from '/@/components/business/collaboration/EnhancedOperationTimeline.vue';
   import { performanceMonitor } from '/@/utils/collaboration-performance';
   import { avatarManager } from '/@/utils/avatar-manager';
   // 统一WebSocket架构导入
@@ -396,6 +381,7 @@
   import { simpleFieldLockManager } from '/@/utils/simple-field-lock-manager';
   import { createEnhancedOfflineManager, Priority } from '/@/utils/enhanced-offline-manager';
   import { realOperationHistoryManager, recordFieldChange, RealOperationType, createRealOperationHistoryManager } from '/@/utils/real-operation-history';
+  import { getOperationTracker, recordBusinessOperation, OperationType } from '/@/utils/comprehensive-operation-tracker';
   import type { EnhancedConflictInfo } from '/@/utils/enhanced-conflict-resolver';
   import type { OfflineOperation } from '/@/utils/offline-sync-queue';
   import type { EnhancedOfflineManager } from '/@/utils/enhanced-offline-manager';
@@ -527,7 +513,6 @@
   const userStore = useUserStore();
 
   // 🔄 重构协作状态管理系统
-  const showHistoryPanel = ref(false);
   const showCollaborationPanel = ref(false);
   const showConflictDialog = ref(false);
 
@@ -678,10 +663,8 @@
   const currentConflict = ref<ConflictInfo | null>(null);
 
   // 协作相关数据
-  const operationTimelineRef = ref();
   const activeCursors = ref<any[]>([]);
   const mockCollaborators = ref<any[]>([]);
-  const operationHistory = ref<any[]>([]);
   const currentUser = ref<any>({});
   const isDevelopment = ref(process.env.NODE_ENV === 'development');
 
@@ -911,7 +894,7 @@
     }
   }
 
-  // 记录字段变更历史 - 用于操作时间轴
+  // 记录字段变更历史
   function recordFieldChange(fieldName: string, oldValue: any, newValue: any) {
     console.log('📝 [Field History] 记录字段变更:', { fieldName, oldValue, newValue });
 
@@ -964,9 +947,6 @@
     }
   }
 
-  function handleViewQueue() {
-    showHistoryPanel.value = true;
-  }
 
   function handleViewConflicts() {
     showConflictDialog.value = true;
@@ -1183,29 +1163,8 @@
     }
   }
 
-  function handleOperationRollback(operation: any) {
-    console.log('↩️ [Timeline] 操作回滚:', operation);
-    message.info(`已回滚操作: ${operation.type}`);
 
-    // 执行回滚逻辑
-    if (operation.type === 'field_update') {
-      const { fieldName, oldValue } = operation;
-      if (formData.hasOwnProperty(fieldName)) {
-        (formData as any)[fieldName] = oldValue;
-      } else if (professionalFieldData.hasOwnProperty(fieldName)) {
-        professionalFieldData[fieldName] = oldValue;
-      }
-    }
-  }
 
-  function handleOperationExport(exportData: any) {
-    console.log('📤 [Timeline] 导出操作历史:', exportData);
-    message.success('操作历史已导出');
-  }
-
-  function handleTimelineViewChange(viewMode: string) {
-    console.log('👁️ [Timeline] 视图模式变更:', viewMode);
-  }
 
   // 添加操作记录到历史 - 使用生产级操作记录管理器
   async function addOperationRecord(type: string, description: string, fieldName?: string, oldValue?: any, newValue?: any) {
@@ -1226,7 +1185,7 @@
 
       console.log('📝 [Real Operation] 记录操作成功:', operation);
 
-      // 更新本地操作历史用于时间轴显示
+      // 更新本地操作记录
       const formattedOperation = {
         id: operation.id,
         type,
@@ -1246,12 +1205,6 @@
         relatedOperations: []
       };
 
-      operationHistory.value.unshift(formattedOperation);
-
-      // 保持历史记录在合理范围内
-      if (operationHistory.value.length > 100) {
-        operationHistory.value = operationHistory.value.slice(0, 100);
-      }
 
       return operation;
     } catch (error) {
@@ -1276,7 +1229,6 @@
         relatedOperations: []
       };
 
-      operationHistory.value.unshift(localOperation);
       return localOperation;
     }
   }
@@ -1362,16 +1314,6 @@
     }
   }
 
-  // 添加时间轴控制按钮功能
-  function toggleHistoryPanel() {
-    showHistoryPanel.value = !showHistoryPanel.value;
-
-    if (showHistoryPanel.value) {
-      message.info('已打开操作时间轴面板');
-    } else {
-      message.info('已关闭操作时间轴面板');
-    }
-  }
 
   // 创建测试冲突（用于演示）
   async function createTestConflict() {
@@ -1595,6 +1537,9 @@
 
     // 使用批量同步管理器（高并发优化）
     batchSyncManager.addUpdate(fieldName, fieldValue);
+
+    // 注意：操作记录由 recordFieldChange() 函数通过离线队列处理
+    // 这里只负责WebSocket同步和批量更新，避免重复记录
   }
 
 
@@ -2782,6 +2727,22 @@
     setInterval(updateTime, 1000);
     document.addEventListener('keydown', handleKeydown);
 
+    // 🎯 启动全方位操作追踪器
+    const operationTracker = getOperationTracker();
+    operationTracker.start();
+
+    // 记录页面加载操作
+    recordBusinessOperation(
+      OperationType.PAGE_LOAD,
+      'police_report',
+      editReportId.value || 0,
+      '智能接警系统页面加载',
+      {
+        reportType: formData.reportType,
+        isEditMode: isEditMode.value
+      }
+    );
+
     // 初始化页面
     initPage();
 
@@ -3287,44 +3248,6 @@
         // RealOperationManager在构造时已初始化
         console.log('✅ [Real Operation Manager] 初始化成功');
 
-        // 如果是编辑模式，加载历史操作记录
-        if (isEditMode.value && editReportId.value) {
-          try {
-            const historyOperations = await realOperationManager.getOperationHistory({
-              entityType: 'police_report',
-              entityId: editReportId.value,
-              pageNum: 1,
-              pageSize: 50
-            });
-            console.log('📚 [Real Operation Manager] 加载历史操作记录:', historyOperations.length);
-
-            // 转换为时间轴格式
-            const formattedHistory = historyOperations.map(op => ({
-              id: op.id,
-              type: op.type || op.operationType,
-              description: op.description,
-              fieldName: op.fieldName,
-              oldValue: op.oldValue,
-              newValue: op.newValue,
-              user: {
-                id: op.userId,
-                name: op.userName,
-                avatar: ''
-              },
-              timestamp: op.timestamp instanceof Date ? op.timestamp.getTime() :
-                        op.timestamp || Date.now(),
-              impactLevel: op.fieldName && ['reportType', 'reportLevel'].includes(op.fieldName) ? 'HIGH' : 'MEDIUM',
-              hasConflicts: false,
-              relatedOperations: []
-            }));
-
-            operationHistory.value = formattedHistory;
-            console.log('✅ [Real Operation Manager] 历史记录加载完成:', formattedHistory.length);
-          } catch (error) {
-            console.warn('⚠️ [Real Operation Manager] 历史记录加载失败，可能后端服务未启动:', error);
-            // 降级到本地模式，不影响主要功能
-          }
-        }
 
       } catch (error) {
         console.error('❌ [Real Operation Manager] 初始化失败:', error);
@@ -4043,33 +3966,6 @@
   transition: width 0.3s ease;
 }
 
-/* 时间轴面板样式 */
-.timeline-panel {
-  position: fixed;
-  top: 80px;
-  left: 20px;
-  width: 400px;
-  max-height: calc(100vh - 120px);
-  background: rgba(255, 255, 255, 0.98);
-  backdrop-filter: blur(12px);
-  border-radius: 16px;
-  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.15);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  z-index: 1000;
-  overflow: hidden;
-  animation: slideInLeft 0.3s ease;
-}
-
-@keyframes slideInLeft {
-  from {
-    transform: translateX(-100%);
-    opacity: 0;
-  }
-  to {
-    transform: translateX(0);
-    opacity: 1;
-  }
-}
 
 /* 协作光标和头像的全局样式优化 */
 .collaboration-cursor {
@@ -4627,5 +4523,38 @@
   }
 }
 
-/* 强制更新缓存: 2025年09月25日 */
+/* 右侧面板布局 */
+.right-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.professional-section {
+  flex: 1;
+  overflow-y: auto;
+  padding-bottom: 12px;
+}
+
+
+/* 调整专业字段区域的滚动 */
+.professional-section::-webkit-scrollbar {
+  width: 4px;
+}
+
+.professional-section::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 2px;
+}
+
+.professional-section::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 2px;
+}
+
+.professional-section::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
+}
+
+/* 强制更新缓存: 2025年09月28日 */
 </style>
