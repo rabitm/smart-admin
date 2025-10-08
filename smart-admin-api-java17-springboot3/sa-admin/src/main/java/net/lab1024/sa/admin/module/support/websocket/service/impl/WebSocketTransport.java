@@ -9,7 +9,9 @@ import net.lab1024.sa.admin.module.support.websocket.domain.WebSocketSession;
 import net.lab1024.sa.admin.module.support.websocket.service.MessageTransport;
 import net.lab1024.sa.admin.module.support.websocket.service.WebSocketSessionManager;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.web.socket.TextMessage;
 
 import java.io.IOException;
@@ -26,9 +28,9 @@ import java.util.function.Predicate;
  * @Copyright 1024创新实验室
  */
 @Slf4j
-@Service
+@Service("webSocketTransport")
 @RequiredArgsConstructor
-@ConditionalOnProperty(name = "websocket.transport.type", havingValue = "websocket", matchIfMissing = true)
+@ConditionalOnExpression("'${websocket.transport.type:websocket}'.equals('websocket') || '${websocket.transport.type:websocket}'.equals('hybrid')")
 public class WebSocketTransport implements MessageTransport {
 
     private final WebSocketSessionManager sessionManager;

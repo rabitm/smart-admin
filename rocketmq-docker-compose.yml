@@ -1,0 +1,79 @@
+# ================================================================
+# RocketMQ 单节点 Docker Compose 配置
+# 版本: RocketMQ latest
+# ================================================================
+
+version: '3.9'
+
+services:
+  # ==================== NameServer ====================
+  rocketmq-namesrv:
+    image: apache/rocketmq:latest
+    container_name: rocketmq-namesrv
+    restart: always
+    ports:
+      - "9876:9876"
+    environment:
+      JAVA_OPT_EXT: "-Xms512m -Xmx512m"
+    volumes:
+      - rocketmq-namesrv-logs:/home/rocketmq/logs
+    command: sh mqnamesrv
+    networks:
+      - rocketmq
+
+  # ==================== Broker ====================
+  rocketmq-broker:
+    image: apache/rocketmq:latest
+    container_name: rocketmq-broker
+    restart: always
+    depends_on:
+      - rocketmq-namesrv
+    ports:
+      - "10909:10909"
+      - "10911:10911"
+      - "10912:10912"
+    environment:
+      NAMESRV_ADDR: "rocketmq-namesrv:9876"
+      JAVA_OPT_EXT: "-Xms1g -Xmx1g"
+    volumes:
+      - rocketmq-broker-store:/home/rocketmq/store
+      - rocketmq-broker-logs:/home/rocketmq/logs
+    command: >
+      sh -c "
+        sleep 15
+        sh mqbroker -n rocketmq-namesrv:9876 autoCreateTopicEnable=true
+      "
+    networks:
+      - rocketmq
+
+  # ==================== Dashboard ====================
+  rocketmq-dashboard:
+    image: apacherocketmq/rocketmq-dashboard:latest
+    container_name: rocketmq-dashboard
+    restart: always
+    depends_on:
+      - rocketmq-broker
+    ports:
+      - "19876:8080"
+    environment:
+      JAVA_OPTS: "-Drocketmq.namesrv.addr=rocketmq-namesrv:9876"
+    networks:
+      - rocketmq
+
+networks:
+  rocketmq:
+    driver: bridge
+    name: rocketmq-network
+
+volumes:
+  rocketmq-namesrv-logs:
+    driver: local
+    name: rocketmq-namesrv-logs
+
+  rocketmq-broker-store:
+    driver: local
+    name: rocketmq-broker-store
+
+  rocketmq-broker-logs:
+    driver: local
+    name: rocketmq-broker-logs

@@ -20,3 +20,5 @@ server:
 spring:
   profiles:
     active: '@profiles.active@'
+
+# RocketMQ和WebSocket配置已迁移到 sa-base.yaml，请在那里查看和修改配置

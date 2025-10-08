@@ -3,6 +3,7 @@ package net.lab1024.sa.admin.module.support.websocket.service;
 import lombok.extern.slf4j.Slf4j;
 import net.lab1024.sa.admin.module.support.websocket.domain.WebSocketSession;
 import org.springframework.stereotype.Service;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -41,6 +42,16 @@ public class WebSocketSessionManager {
      * 模块会话映射：module -> Set<sessionId>
      */
     private final Map<String, Map<String, WebSocketSession>> moduleSessions = new ConcurrentHashMap<>();
+
+    /**
+     * SSE连接映射：sessionId -> SseEmitter
+     */
+    private final Map<String, SseEmitter> sseConnections = new ConcurrentHashMap<>();
+
+    /**
+     * SSE订阅主题映射：sessionId -> topics
+     */
+    private final Map<String, List<String>> sseSubscriptions = new ConcurrentHashMap<>();
 
     /**
      * 添加会话
@@ -285,7 +296,112 @@ public class WebSocketSessionManager {
             "connectedSessions", getAllActiveSessions().size(),
             "totalRooms", roomSessions.size(),
             "totalModules", moduleSessions.size(),
-            "onlineUsers", getOnlineUserCount()
+            "onlineUsers", getOnlineUserCount(),
+            "sseConnections", sseConnections.size()
         );
+    }
+
+    // ================== SSE相关方法 ==================
+
+    /**
+     * 注册SSE连接
+     */
+    public void registerSseConnection(String sessionId, Long userId, SseEmitter emitter, List<String> topics) {
+        sseConnections.put(sessionId, emitter);
+        sseSubscriptions.put(sessionId, topics);
+
+        // 创建或更新WebSocket会话记录
+        WebSocketSession session = sessions.get(sessionId);
+        if (session == null) {
+            session = new WebSocketSession();
+            session.setSessionId(sessionId);
+            session.setUserId(userId);
+            session.setConnectTime(LocalDateTime.now());
+            session.setStatus("SSE_CONNECTED");
+            addSession(session);
+        }
+
+        log.info("🚀 [SSE] 注册SSE连接: sessionId={}, userId={}, topics={}", sessionId, userId, topics);
+    }
+
+    /**
+     * 移除SSE连接
+     */
+    public void removeSseConnection(String sessionId) {
+        SseEmitter emitter = sseConnections.remove(sessionId);
+        List<String> topics = sseSubscriptions.remove(sessionId);
+
+        if (emitter != null) {
+            try {
+                emitter.complete();
+            } catch (Exception e) {
+                log.warn("🚀 [SSE] 关闭SSE连接失败: sessionId={}, error={}", sessionId, e.getMessage());
+            }
+        }
+
+        // 同时移除WebSocket会话记录
+        removeSession(sessionId);
+
+        log.info("🚀 [SSE] 移除SSE连接: sessionId={}, topics={}", sessionId, topics);
+    }
+
+    /**
+     * 获取SSE连接
+     */
+    public SseEmitter getSseConnection(String sessionId) {
+        return sseConnections.get(sessionId);
+    }
+
+    /**
+     * 获取所有SSE连接
+     */
+    public Map<String, SseEmitter> getAllSseConnections() {
+        return new ConcurrentHashMap<>(sseConnections);
+    }
+
+    /**
+     * 获取SSE订阅主题
+     */
+    public List<String> getSseSubscriptions(String sessionId) {
+        return sseSubscriptions.get(sessionId);
+    }
+
+    /**
+     * 检查SSE连接是否存在
+     */
+    public boolean hasSseConnection(String sessionId) {
+        return sseConnections.containsKey(sessionId);
+    }
+
+    /**
+     * 根据用户ID获取SSE连接
+     */
+    public SseEmitter getSseConnectionByUserId(Long userId) {
+        String sessionId = userSessions.get(userId);
+        return sessionId != null ? sseConnections.get(sessionId) : null;
+    }
+
+    /**
+     * 清理无效的SSE连接
+     */
+    public void cleanInvalidSseConnections() {
+        List<String> invalidSessions = sseConnections.entrySet().stream()
+            .filter(entry -> {
+                try {
+                    // 尝试发送心跳检测SSE连接是否有效
+                    entry.getValue().send(SseEmitter.event().name("ping").data("ping"));
+                    return false;
+                } catch (Exception e) {
+                    return true; // 连接无效
+                }
+            })
+            .map(Map.Entry::getKey)
+            .collect(Collectors.toList());
+
+        invalidSessions.forEach(this::removeSseConnection);
+
+        if (!invalidSessions.isEmpty()) {
+            log.info("🚀 [SSE] 清理无效连接: {} 个", invalidSessions.size());
+        }
     }
 }

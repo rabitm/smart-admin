@@ -14,6 +14,7 @@ import net.lab1024.sa.admin.module.business.oa.police.domain.vo.PoliceReportVO;
 import net.lab1024.sa.admin.module.business.oa.police.domain.vo.DataVersionVO;
 import net.lab1024.sa.admin.module.business.oa.police.service.PoliceReportService;
 import net.lab1024.sa.admin.module.business.oa.police.service.PoliceEditLockService;
+import net.lab1024.sa.admin.module.business.oa.police.service.sync.RocketMQSyncServiceImpl;
 import net.lab1024.sa.base.common.domain.PageResult;
 import net.lab1024.sa.base.common.domain.RequestUser;
 import net.lab1024.sa.base.common.domain.ResponseDTO;
@@ -40,6 +41,9 @@ public class PoliceReportController {
 
     @Resource
     private PoliceEditLockService policeEditLockService;
+
+    @Resource(name = "rocketMQSyncService")
+    private RocketMQSyncServiceImpl rocketMQSyncService;
 
     @Operation(summary = "分页查询警情信息")
     @PostMapping("/oa/police/report/page/query")
@@ -187,6 +191,86 @@ public class PoliceReportController {
             @RequestParam(defaultValue = "1") Integer pageNum,
             @RequestParam(defaultValue = "20") Integer pageSize) {
         return policeReportService.checkDataVersionWithPage(clientVersion, pageNum, pageSize);
+    }
+
+    // ========== RocketMQ协同功能端点 ==========
+
+    @Operation(summary = "用户协同状态同步")
+    @PostMapping("/oa/police/report/collaboration/user-state")
+    @SaCheckPermission("oa:police:update")
+    public ResponseDTO<String> syncUserCollaborationState(
+            @RequestParam Long reportId,
+            @RequestParam String action) {
+        try {
+            RequestUser currentUser = SmartRequestUtil.getRequestUser();
+            rocketMQSyncService.syncUserCollaborationState(reportId, currentUser.getUserId(),
+                    currentUser.getUserName(), action);
+            return ResponseDTO.ok("用户协同状态同步成功");
+        } catch (Exception e) {
+            return ResponseDTO.userErrorParam("用户协同状态同步失败: " + e.getMessage());
+        }
+    }
+
+    @Operation(summary = "多字段锁定管理")
+    @PostMapping("/oa/police/report/collaboration/multi-field-lock")
+    @SaCheckPermission("oa:police:update")
+    public ResponseDTO<String> syncMultiFieldLock(
+            @RequestParam Long reportId,
+            @RequestParam String[] fieldNames,
+            @RequestParam String action) {
+        try {
+            RequestUser currentUser = SmartRequestUtil.getRequestUser();
+            rocketMQSyncService.syncMultiFieldLock(reportId, currentUser.getUserId(),
+                    currentUser.getUserName(), fieldNames, action);
+            return ResponseDTO.ok("多字段锁定同步成功");
+        } catch (Exception e) {
+            return ResponseDTO.userErrorParam("多字段锁定同步失败: " + e.getMessage());
+        }
+    }
+
+    @Operation(summary = "用户活跃度同步")
+    @PostMapping("/oa/police/report/collaboration/user-activity")
+    @SaCheckPermission("oa:police:update")
+    public ResponseDTO<String> syncUserActivity(
+            @RequestParam Long reportId,
+            @RequestParam String activityType) {
+        try {
+            RequestUser currentUser = SmartRequestUtil.getRequestUser();
+            rocketMQSyncService.syncUserActivity(reportId, currentUser.getUserId(),
+                    currentUser.getUserName(), activityType);
+            return ResponseDTO.ok("用户活跃度同步成功");
+        } catch (Exception e) {
+            return ResponseDTO.userErrorParam("用户活跃度同步失败: " + e.getMessage());
+        }
+    }
+
+    @Operation(summary = "批量字段更新")
+    @PostMapping("/oa/police/report/collaboration/batch-field-update")
+    @SaCheckPermission("oa:police:update")
+    public ResponseDTO<String> syncBatchFieldUpdate(
+            @RequestParam Long reportId,
+            @RequestBody Map<String, String> fieldUpdates,
+            @RequestParam(defaultValue = "BATCH_UPDATE") String operationType) {
+        try {
+            RequestUser currentUser = SmartRequestUtil.getRequestUser();
+            rocketMQSyncService.syncBatchFieldUpdate(reportId, currentUser.getUserId(),
+                    currentUser.getUserName(), fieldUpdates, operationType);
+            return ResponseDTO.ok("批量字段更新同步成功");
+        } catch (Exception e) {
+            return ResponseDTO.userErrorParam("批量字段更新同步失败: " + e.getMessage());
+        }
+    }
+
+    @Operation(summary = "RocketMQ健康状态检查")
+    @GetMapping("/oa/police/report/collaboration/health-status")
+    @SaCheckPermission("oa:police:query")
+    public ResponseDTO<Map<String, Object>> getRocketMQHealthStatus() {
+        try {
+            Map<String, Object> healthStatus = rocketMQSyncService.getHealthStatus();
+            return ResponseDTO.ok(healthStatus);
+        } catch (Exception e) {
+            return ResponseDTO.userErrorParam("健康状态检查失败: " + e.getMessage());
+        }
     }
 
 }

@@ -6,6 +6,7 @@ import net.lab1024.sa.admin.module.business.oa.seat.service.SeatService;
 import net.lab1024.sa.admin.module.support.websocket.domain.WebSocketMessage;
 import net.lab1024.sa.admin.module.support.websocket.handler.UnifiedWebSocketHandler;
 import net.lab1024.sa.admin.module.support.websocket.service.MessageTransport;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
 import jakarta.annotation.PostConstruct;
@@ -20,12 +21,19 @@ import java.util.Map;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class SeatWebSocketHandler implements UnifiedWebSocketHandler.MessageHandler {
 
     private final UnifiedWebSocketHandler unifiedWebSocketHandler;
     private final MessageTransport messageTransport;
     private final SeatService seatService;
+
+    public SeatWebSocketHandler(UnifiedWebSocketHandler unifiedWebSocketHandler,
+                               @Qualifier("webSocketTransport") MessageTransport messageTransport,
+                               SeatService seatService) {
+        this.unifiedWebSocketHandler = unifiedWebSocketHandler;
+        this.messageTransport = messageTransport;
+        this.seatService = seatService;
+    }
 
     @PostConstruct
     public void init() {

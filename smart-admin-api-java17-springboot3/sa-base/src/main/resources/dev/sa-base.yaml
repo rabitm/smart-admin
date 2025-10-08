@@ -185,3 +185,43 @@ smart:
     db-refresh-enabled: true
     # 数据库配置检测-执行间隔 默认120秒 可选
     db-refresh-interval: 60
+
+# RocketMQ 5.3.2 增强配置 - 支持服务未启动时自动降级
+rocketmq:
+  # NameServer地址 - WSL2 Docker Compose部署
+  name-server: localhost:9876
+
+  # 生产者配置 - 修复Producer null问题
+  producer:
+    group: smart-admin-producer-dev
+    send-message-timeout: 30000  # 增加超时时间防止producer为null
+    compress-message-body-threshold: 4096
+    max-message-size: 4194304
+    retry-times-when-send-failed: 2  # 减少重试次数提高性能
+    retry-times-when-send-async-failed: 2
+    retry-another-broker-when-not-store-ok: true
+    # 增加Producer连接稳定性配置
+    access-channel: LOCAL  # 使用本地访问方式
+    enable-msg-trace: false  # 关闭消息轨迹减少开销
+
+  # 消费者配置 - 优化性能和稳定性
+  consumer:
+    group: smart-admin-consumer-dev
+    message-model: clustering
+    consume-mode: concurrently
+    consume-thread-min: 5  # 减少线程数适应本地测试
+    consume-thread-max: 20
+    pull-threshold-for-queue: 1000
+    pull-threshold-size-for-queue: 256
+    pull-threshold-for-topic: 4000
+    consume-message-batch-max-size: 16
+    max-reconsume-times: 16
+    suspend-current-queue-time-millis: 1000
+
+# WebSocket传输配置
+websocket:
+  transport:
+    type: hybrid  # websocket | rocketmq | hybrid
+    primary: rocketmq  # 主要传输方式
+    fallback: websocket  # 降级传输方式
+    hybrid-fallback: true

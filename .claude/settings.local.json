@@ -14,7 +14,14 @@
       "Bash(curl:*)",
       "mcp__puppeteer__puppeteer_navigate",
       "mcp__puppeteer__puppeteer_screenshot",
-      "mcp__puppeteer__puppeteer_fill"
+      "mcp__puppeteer__puppeteer_fill",
+      "Bash(wsl:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:rocketmq.apache.org)",
+      "Bash(claude mcp add:*)",
+      "Bash(docker logs:*)",
+      "Bash(docker exec:*)",
+      "Bash(docker-compose:*)"
     ],
     "deny": [],
     "ask": []

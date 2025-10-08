@@ -12,6 +12,7 @@ import net.lab1024.sa.base.common.util.SmartRequestUtil;
 import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 
 import java.lang.reflect.Field;
 import java.time.LocalDateTime;
@@ -26,8 +27,9 @@ import java.util.Map;
  * @Copyright 1024创新实验室
  */
 @Slf4j
-@Service
+@Service("webSocketSyncService")
 @RequiredArgsConstructor
+@ConditionalOnMissingBean(name = "rocketMQSyncService")
 public class WebSocketSyncServiceImpl implements SyncService {
 
     private final SeatSyncService seatSyncService;

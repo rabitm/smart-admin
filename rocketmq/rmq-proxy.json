@@ -1,0 +1,86 @@
+{
+  "clusterName": "DefaultCluster",
+  "brokerName": "broker-a",
+  "rocketMQClusterConfig": {
+    "name": "DefaultCluster",
+    "brokers": [
+      {
+        "name": "broker-a",
+        "addresses": ["rmqbroker:10911"]
+      }
+    ]
+  },
+  "grpcServerConfig": {
+    "port": 8080,
+    "maxInboundMessageSize": 4194304,
+    "enableTls": false
+  },
+  "remotingServerConfig": {
+    "listenPort": 8081,
+    "maxInboundMessageSize": 16777216
+  },
+  "metricConfig": {
+    "enableExporter": false
+  },
+  "traceConfig": {
+    "enabled": false
+  },
+  "authenticationConfig": {
+    "authenticationEnabled": false
+  },
+  "authorizationConfig": {
+    "authorizationEnabled": false
+  },
+  "topicQueueMappingCleanThresholdMills": 86400000,
+  "lockManagerConfig": {
+    "lockStoreConfig": {
+      "type": "local"
+    }
+  },
+  "topicConfig": {
+    "autoCreateTopicEnable": true,
+    "autoCreateSubscriptionGroup": true,
+    "clusterTopicEnable": true,
+    "brokerTopicEnable": true,
+    "systemTopicList": [
+      "DefaultHeartBeatSyncerTopic",
+      "RMQ_SYS_TRACE_TOPIC",
+      "OFFSET_MOVED_EVENT",
+      "SCHEDULE_TOPIC_XXXX",
+      "BenchmarkTest",
+      "SELF_TEST_TOPIC",
+      "RMQ_SYS_TRANS_HALF_TOPIC",
+      "RMQ_SYS_TRANS_OP_HALF_TOPIC"
+    ]
+  },
+  "producerConfig": {
+    "defaultTopicQueueNums": 8,
+    "sendMessageThreadPoolNums": 16,
+    "sendMessageTimeout": 30000,
+    "compressMsgBodyOverHowmuch": 4096,
+    "retryTimesWhenSendFailed": 2,
+    "retryTimesWhenSendAsyncFailed": 2,
+    "maxMessageSize": 1048576,
+    "defaultMQProducerGroup": "DEFAULT_PRODUCER"
+  },
+  "consumerConfig": {
+    "pullMessageThreadPoolNums": 32,
+    "pullMessageBatchMaxNums": 32,
+    "consumeMessageBatchMaxSize": 1,
+    "pullBatchSize": 32,
+    "pullInterval": 0,
+    "consumeThreadMin": 20,
+    "consumeThreadMax": 64,
+    "consumeTimeout": 15,
+    "maxReconsumeTimes": 16,
+    "suspendTimeMillis": 1000,
+    "messageModel": "CLUSTERING",
+    "subscriptionInitMode": "MIN",
+    "defaultMQPushConsumerGroup": "DEFAULT_CONSUMER"
+  },
+  "nameServerConfig": {
+    "address": "rmqnamesrv:9876",
+    "pollInterval": 30000,
+    "heartbeatInterval": 30000
+  }
+}

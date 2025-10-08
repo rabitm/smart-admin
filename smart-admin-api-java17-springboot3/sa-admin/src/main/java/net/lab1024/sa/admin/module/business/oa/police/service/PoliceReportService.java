@@ -324,11 +324,18 @@ public class PoliceReportService {
             // 直接更新数据库，避免批量处理的并发问题
             updateSingleField(reportId, fieldName, newValue);
 
-            // 记录操作日志
-            syncService.recordOperation(reportId, currentUserId, currentUserName,
-                fieldName, oldValue, newValue, "FIELD_UPDATE");
+            // 🚀 [重要修复] 调用同步服务进行字段同步（RocketMQ或WebSocket）
+            try {
+                log.info("🚀 [字段同步] 调用同步服务: reportId={}, fieldName={}, userId={}, userName={}",
+                        reportId, fieldName, currentUserId, currentUserName);
+                syncService.syncFieldUpdate(reportId, currentUserId, currentUserName,
+                    fieldName, oldValue, newValue, "FIELD_UPDATE");
+                log.info("✅ [字段同步] 同步服务调用成功");
+            } catch (Exception e) {
+                log.error("❌ [字段同步] 同步服务调用失败", e);
+            }
 
-            // 通知实时更新（WebSocket）
+            // 保留原有WebSocket通知作为兼容性备份
             try {
                 seatSyncService.notifyPoliceCaseFieldSync(reportId, currentUserId, currentUserName, fieldName, newValue);
             } catch (Exception e) {

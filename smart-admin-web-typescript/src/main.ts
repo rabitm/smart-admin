@@ -33,7 +33,7 @@ import LocalStorageKeyConst from '/@/constants/local-storage-key-const.js';
 import '/@/utils/ployfill';
 import { useDictStore } from '/@/store/modules/system/dict.js';
 import { dictApi } from '/@/api/support/dict-api.js';
-import { initWebSocket } from '/@/utils/websocket-manager';
+import { messageClientManager } from '/@/services/message-client-manager';
 
 /*
  * -------------------- ※ 着重 解释说明下main.js的初始化逻辑 begin ※ --------------------
@@ -65,12 +65,12 @@ async function getLoginInfo() {
     //更新用户信息到pinia
     useUserStore().setUserLoginInfo(res.data);
 
-    // 初始化WebSocket连接
+    // 初始化统一消息客户端（支持WebSocket和RocketMQ）
     try {
-      await initWebSocket();
-      console.log('WebSocket连接初始化成功');
+      await messageClientManager.initialize();
+      console.log('🔄 统一消息客户端初始化成功，传输模式:', messageClientManager.getConnectionStats().transportType);
     } catch (error) {
-      console.error('WebSocket连接初始化失败:', error);
+      console.error('🔄 统一消息客户端初始化失败:', error);
     }
   } catch (e) {
     message.error(e.data ? e.data.msg : e.message);
