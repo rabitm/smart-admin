@@ -44,6 +44,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import net.lab1024.sa.admin.module.business.im.listener.PoliceGroupAutoCreateListener;
+import org.springframework.context.ApplicationEventPublisher;
 
 /**
  * 警情录入Service
@@ -72,6 +74,9 @@ public class PoliceReportService {
 
     @Resource
     private PoliceListUpdateService policeListUpdateService;
+
+    @Resource
+    private ApplicationEventPublisher eventPublisher;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -142,6 +147,15 @@ public class PoliceReportService {
                 String.valueOf(currentUserId), currentUserName);
         } catch (Exception e) {
             log.error("发送警情新增实时通知失败", e);
+        }
+
+        // 发布警情创建事件,触发OpenIM群组自动创建
+        try {
+            eventPublisher.publishEvent(new PoliceGroupAutoCreateListener.PoliceReportCreatedEvent(policeReportEntity));
+            log.info("📱 [警情服务] 发布警情创建事件 - 警情ID: {}, 警情编号: {}",
+                    policeReportEntity.getReportId(), policeReportEntity.getReportNumber());
+        } catch (Exception e) {
+            log.error("📱 [警情服务] 发布警情创建事件失败", e);
         }
 
         return ResponseDTO.ok();

@@ -111,6 +111,17 @@
             :reportNumber="detailData.reportNumber"
           />
         </a-tab-pane>
+
+        <!-- IM群聊Tab -->
+        <a-tab-pane key="im-chat" tab="群组沟通">
+          <template #tab>
+            <message-outlined style="margin-right: 4px" />
+            群组沟通
+          </template>
+          <div class="im-chat-container">
+            <EmbeddedImChat v-if="detailData.reportId" :report-id="Number(detailData.reportId)" />
+          </div>
+        </a-tab-pane>
       </a-tabs>
     </div>
 
@@ -123,12 +134,14 @@
   import { ref, onMounted } from 'vue';
   import { useRoute, useRouter } from 'vue-router';
   import { message, Modal } from 'ant-design-vue';
+  import { MessageOutlined } from '@ant-design/icons-vue';
   import { SmartLoading } from '/@/components/framework/smart-loading';
   import { policeReportApi } from '/@/api/business/oa/police-report-api';
   import { smartSentry } from '/@/lib/smart-sentry';
   import PoliceReportOperate from './components/police-report-operate-modal.vue';
   import PoliceOperationTimeline from './components/police-operation-timeline.vue';
   import CompactOperationHistory from './components/compact-operation-history.vue';
+  import EmbeddedImChat from '/@/components/business/im/embedded-im-chat.vue';
 
   const route = useRoute();
   const router = useRouter();
@@ -241,5 +254,12 @@
   text-align: center;
   padding: 20px 0;
   border-top: 1px solid #f0f0f0;
+}
+
+.im-chat-container {
+  height: 600px;
+  border: 1px solid #f0f0f0;
+  border-radius: 4px;
+  overflow: hidden;
 }
 </style>

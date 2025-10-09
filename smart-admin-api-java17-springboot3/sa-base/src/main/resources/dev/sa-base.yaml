@@ -225,3 +225,78 @@ websocket:
     primary: rocketmq  # 主要传输方式
     fallback: websocket  # 降级传输方式
     hybrid-fallback: true
+
+# OpenIM 即时通讯配置
+openim:
+  # OpenIM服务地址 (localhost部署,使用默认端口)
+  api-url: http://localhost:10002
+  ws-url: ws://localhost:10001
+  admin-api-url: http://localhost:10009
+
+  # 管理员配置 (请根据实际情况修改)
+  admin:
+    user-id: imAdmin              # OpenIM管理员用户ID
+    secret: openIM123             # OpenIM管理员密钥 (请替换为实际值)
+
+  # 平台配置
+  platform-id: 5                  # 5=Web平台
+
+  # 自动拉人配置
+  auto-invite:
+    enabled: true
+    rules:
+      - type: CREATOR             # 创建人自动加入
+        enabled: true
+        priority: 1
+      - type: OWNER               # 负责人自动加入
+        enabled: true
+        priority: 2
+      - type: DEPARTMENT          # 部门成员自动加入
+        enabled: false
+        priority: 3
+        config:
+          include-manager: true   # 包含部门主管
+      - type: ROLE                # 角色成员自动加入
+        enabled: false
+        priority: 4
+        config:
+          roles:                  # 指定角色列表
+            - 消防队员
+            - 应急指挥
+
+  # 群组配置
+  group:
+    max-members: 500              # 最大成员数
+    default-type: 2               # 默认群组类型 (2=工作群)
+    auto-create: true             # 警情创建时自动创建群组
+
+  # 功能开关
+  features:
+    text-message: true            # 文本消息
+    image-message: true           # 图片消息
+    file-message: true            # 文件消息
+    voice-message: false          # 语音消息 (第二阶段)
+    video-message: false          # 视频消息 (第二阶段)
+    at-mention: true              # @提醒
+    quote-reply: true             # 引用回复
+    message-recall: true          # 消息撤回
+    message-search: false         # 消息搜索 (第二阶段)
+
+  # 安全配置
+  security:
+    token-expire-hours: 24        # Token有效期 (小时)
+    max-file-size-mb: 100         # 最大文件大小 (MB)
+    allowed-file-types:           # 允许的文件类型
+      - jpg
+      - jpeg
+      - png
+      - gif
+      - pdf
+      - doc
+      - docx
+      - xls
+      - xlsx
+      - zip
+    rate-limit:
+      enabled: true
+      max-messages-per-minute: 60  # 每分钟最大消息数

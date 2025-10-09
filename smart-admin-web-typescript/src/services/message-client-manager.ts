@@ -45,18 +45,17 @@ class MessageClientManager {
 
       // 添加用户信息到配置
       const userStore = useUserStore();
-      const user = userStore.getLoginUser();
-      if (user) {
+      if (userStore.employeeId) {
         if (this.config.rocketmq) {
-          this.config.rocketmq.userId = user.userId;
-          this.config.rocketmq.userName = user.userName;
+          this.config.rocketmq.userId = userStore.employeeId;
+          this.config.rocketmq.userName = userStore.actualName || userStore.loginName;
           this.config.rocketmq.sessionId = this.generateSessionId();
         }
         if (this.config.websocket) {
           this.config.websocket.params = {
             ...this.config.websocket.params,
-            userId: user.userId,
-            userName: user.userName
+            userId: userStore.employeeId,
+            userName: userStore.actualName || userStore.loginName
           };
         }
       }
