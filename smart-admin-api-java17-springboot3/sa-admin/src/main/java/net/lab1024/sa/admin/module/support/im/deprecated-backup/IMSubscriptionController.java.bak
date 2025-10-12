@@ -1,0 +1,86 @@
+package net.lab1024.sa.admin.module.support.im.controller;
+
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import lombok.extern.slf4j.Slf4j;
+import net.lab1024.sa.admin.module.support.im.websocket.IMWebSocketHandler;
+import net.lab1024.sa.base.common.domain.RequestUser;
+import net.lab1024.sa.base.common.domain.ResponseDTO;
+import net.lab1024.sa.base.common.util.SmartRequestUtil;
+import org.springframework.web.bind.annotation.*;
+
+import jakarta.annotation.Resource;
+
+/**
+ * IM订阅控制器
+ *
+ * @Author Claude Code Assistant
+ * @Date 2025-10-09
+ * @Copyright <a href="https://1024lab.net">1024创新实验室</a>
+ */
+@Slf4j
+@RestController
+@RequestMapping("/im/subscription")
+@Tag(name = "IM订阅管理")
+public class IMSubscriptionController {
+
+    @Resource
+    private IMWebSocketHandler imWebSocketHandler;
+
+    /**
+     * 订阅警情消息
+     *
+     * @param reportId 警情ID
+     * @return 响应结果
+     */
+    @PostMapping("/subscribe/{reportId}")
+    @Operation(summary = "订阅警情消息")
+    public ResponseDTO<Void> subscribeReport(@PathVariable Long reportId) {
+        RequestUser requestUser = SmartRequestUtil.getRequestUser();
+        if (requestUser == null) {
+            return ResponseDTO.userErrorParam("用户未登录");
+        }
+
+        Long userId = requestUser.getUserId();
+        imWebSocketHandler.subscribeReport(userId, reportId);
+
+        log.info("✅ [订阅管理] 用户{}订阅警情{}", userId, reportId);
+
+        return ResponseDTO.ok();
+    }
+
+    /**
+     * 取消订阅警情消息
+     *
+     * @param reportId 警情ID
+     * @return 响应结果
+     */
+    @PostMapping("/unsubscribe/{reportId}")
+    @Operation(summary = "取消订阅警情消息")
+    public ResponseDTO<Void> unsubscribeReport(@PathVariable Long reportId) {
+        RequestUser requestUser = SmartRequestUtil.getRequestUser();
+        if (requestUser == null) {
+            return ResponseDTO.userErrorParam("用户未登录");
+        }
+
+        Long userId = requestUser.getUserId();
+        imWebSocketHandler.unsubscribeReport(userId, reportId);
+
+        log.info("✅ [订阅管理] 用户{}取消订阅警情{}", userId, reportId);
+
+        return ResponseDTO.ok();
+    }
+
+    /**
+     * 获取警情订阅者数量
+     *
+     * @param reportId 警情ID
+     * @return 订阅者数量
+     */
+    @GetMapping("/subscriber-count/{reportId}")
+    @Operation(summary = "获取警情订阅者数量")
+    public ResponseDTO<Integer> getSubscriberCount(@PathVariable Long reportId) {
+        int count = imWebSocketHandler.getSubscriberCount(reportId);
+        return ResponseDTO.ok(count);
+    }
+}

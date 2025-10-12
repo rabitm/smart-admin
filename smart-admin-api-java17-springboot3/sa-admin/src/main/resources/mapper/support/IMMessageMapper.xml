@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="net.lab1024.sa.admin.module.support.im.dao.IMMessageDao">
+
+    <!-- 根据消息ID查询消息 -->
+    <select id="selectByMessageId" resultType="net.lab1024.sa.admin.module.support.im.domain.entity.IMMessageEntity">
+        SELECT *
+        FROM t_im_message
+        WHERE message_id = #{messageId}
+          AND deleted_flag = 0
+        LIMIT 1
+    </select>
+
+    <!-- 根据警情ID查询消息列表(按时间倒序) -->
+    <select id="selectByReportId" resultType="net.lab1024.sa.admin.module.support.im.domain.entity.IMMessageEntity">
+        SELECT *
+        FROM t_im_message
+        WHERE report_id = #{reportId}
+          AND deleted_flag = 0
+          AND status = 1
+        ORDER BY send_time DESC
+        LIMIT #{limit}
+    </select>
+
+    <!-- 根据警情ID和时间范围查询消息列表 -->
+    <select id="selectByReportIdAndTime" resultType="net.lab1024.sa.admin.module.support.im.domain.entity.IMMessageEntity">
+        SELECT *
+        FROM t_im_message
+        WHERE report_id = #{reportId}
+          AND deleted_flag = 0
+          AND status = 1
+          <if test="beforeTime != null">
+              AND send_time &lt; #{beforeTime}
+          </if>
+        ORDER BY send_time DESC
+        LIMIT #{limit}
+    </select>
+
+    <!-- 根据群组ID查询消息列表(按时间倒序) -->
+    <select id="selectByGroupId" resultType="net.lab1024.sa.admin.module.support.im.domain.entity.IMMessageEntity">
+        SELECT *
+        FROM t_im_message
+        WHERE group_id = #{groupId}
+          AND deleted_flag = 0
+          AND status = 1
+        ORDER BY send_time DESC
+        LIMIT #{limit}
+    </select>
+
+    <!-- 统计警情的消息总数 -->
+    <select id="countByReportId" resultType="java.lang.Integer">
+        SELECT COUNT(*)
+        FROM t_im_message
+        WHERE report_id = #{reportId}
+          AND deleted_flag = 0
+          AND status = 1
+    </select>
+
+    <!-- 批量插入消息 -->
+    <insert id="batchInsert" parameterType="java.util.List">
+        INSERT INTO t_im_message (
+            report_id,
+            group_id,
+            message_id,
+            server_message_id,
+            conversation_id,
+            sender_id,
+            sender_employee_id,
+            sender_name,
+            sender_avatar,
+            content_type,
+            content,
+            content_json,
+            send_time,
+            seq,
+            status,
+            is_read,
+            deleted_flag
+        ) VALUES
+        <foreach collection="list" item="item" separator=",">
+            (
+                #{item.reportId},
+                #{item.groupId},
+                #{item.messageId},
+                #{item.serverMessageId},
+                #{item.conversationId},
+                #{item.senderId},
+                #{item.senderEmployeeId},
+                #{item.senderName},
+                #{item.senderAvatar},
+                #{item.contentType},
+                #{item.content},
+                #{item.contentJson},
+                #{item.sendTime},
+                #{item.seq},
+                #{item.status},
+                #{item.isRead},
+                #{item.deletedFlag}
+            )
+        </foreach>
+        ON DUPLICATE KEY UPDATE
+            server_message_id = VALUES(server_message_id),
+            update_time = CURRENT_TIMESTAMP
+    </insert>
+
+</mapper>

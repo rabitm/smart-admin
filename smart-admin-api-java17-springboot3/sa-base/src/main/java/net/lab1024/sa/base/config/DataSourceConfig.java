@@ -17,6 +17,7 @@ import org.apache.ibatis.plugin.Interceptor;
 import org.apache.ibatis.session.SqlSessionFactory;
 import org.springframework.aop.support.DefaultPointcutAdvisor;
 import org.springframework.aop.support.JdkRegexpMethodPointcut;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.boot.web.servlet.ServletRegistrationBean;
@@ -95,7 +96,7 @@ public class DataSourceConfig {
     @jakarta.annotation.Resource
     private MybatisPlusInterceptor paginationInterceptor;
 
-    @jakarta.annotation.Resource
+    @Autowired(required = false)
     private DataScopePlugin dataScopePlugin;
 
     @Bean

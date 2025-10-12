@@ -225,3 +225,77 @@ websocket:
     primary: rocketmq  # 主要传输方式
     fallback: websocket  # 降级传输方式
     hybrid-fallback: true
+
+# OpenIM 即时通讯配置
+openim:
+  # 是否启用 IM 功能
+  enabled: true
+
+  # OpenIM API 服务地址
+  api-url: http://localhost:10002
+
+  # OpenIM WebSocket 服务地址（前端使用）
+  ws-url: ws://localhost:10001
+
+  # 管理员用户 ID（需要先在 OpenIM 中创建）
+  admin-user-id: imAdmin
+
+  # 管理员密钥（如果 OpenIM 启用了认证）
+  admin-secret: openIM123
+
+  # 平台 ID（1=iOS, 2=Android, 3=Windows, 4=OSX, 5=Web, 6=MiniWeb, 7=Linux, 8=AndroidPad, 9=iPad, 10=Admin）
+  platform-id: 10
+
+  # Token 有效期（秒）
+  token-expire-seconds: 86400
+
+  # API 调用超时时间（秒）
+  api-timeout-seconds: 10
+
+  # API 调用最大重试次数
+  retry-max-count: 3
+
+  # 是否自动创建群组
+  auto-create-group: true
+
+  # 是否自动邀请成员
+  auto-invite: true
+
+  # 群组最大成员数
+  group-max-members: 200
+
+  # 群组名称模板（{incidentType}=警情类型, {location}=地点, {time}=时间）
+  group-name-template: "【{incidentType}】{location}"
+
+  # 用户批量同步每批数量
+  user-sync-batch-size: 50
+
+  # 群组邀请每批数量
+  group-invite-batch-size: 100
+
+  # 熔断器失败阈值
+  circuit-breaker-threshold: 5
+
+  # 熔断器超时时间（秒）
+  circuit-breaker-timeout-seconds: 60
+
+  # OpenIM 专用 Redis 配置（用于存储 Token）
+  redis:
+    host: localhost
+    port: 6379
+    password: openIM123
+    database: 0  # OpenIM 使用 database 0
+    timeout: 10000
+
+  # 定时同步配置
+  sync:
+    # 是否启用定时同步
+    enabled: true
+    # 定时任务 cron 表达式（默认: 每小时执行一次）
+    # 格式: 秒 分 时 日 月 周
+    # 示例:
+    #   - 每小时: 0 0 * * * ?
+    #   - 每30分钟: 0 0/30 * * * ?
+    #   - 每天凌晨2点: 0 0 2 * * ?
+    #   - 每周一凌晨2点: 0 0 2 ? * MON
+    cron: 0 0 * * * ?

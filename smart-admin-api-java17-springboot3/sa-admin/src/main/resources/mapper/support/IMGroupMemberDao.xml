@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="net.lab1024.sa.admin.module.support.im.dao.IMGroupMemberDao">
+
+    <!-- 查询群组成员列表 -->
+    <select id="selectByGroupMappingId" resultType="net.lab1024.sa.admin.module.support.im.domain.entity.IMGroupMemberEntity">
+        SELECT *
+        FROM t_im_group_member
+        WHERE group_mapping_id = #{groupMappingId}
+          AND deleted_flag = 0
+        ORDER BY join_time ASC
+    </select>
+
+    <!-- 查询群组中的指定员工 -->
+    <select id="selectByGroupAndEmployee" resultType="net.lab1024.sa.admin.module.support.im.domain.entity.IMGroupMemberEntity">
+        SELECT *
+        FROM t_im_group_member
+        WHERE group_mapping_id = #{groupMappingId}
+          AND employee_id = #{employeeId}
+          AND deleted_flag = 0
+        LIMIT 1
+    </select>
+
+    <!-- 查询员工加入的所有群组 -->
+    <select id="selectByEmployeeId" resultType="net.lab1024.sa.admin.module.support.im.domain.entity.IMGroupMemberEntity">
+        SELECT *
+        FROM t_im_group_member
+        WHERE employee_id = #{employeeId}
+          AND deleted_flag = 0
+        ORDER BY join_time DESC
+    </select>
+
+    <!-- 查询群组成员数量 -->
+    <select id="countByGroupMappingId" resultType="java.lang.Integer">
+        SELECT COUNT(*)
+        FROM t_im_group_member
+        WHERE group_mapping_id = #{groupMappingId}
+          AND deleted_flag = 0
+    </select>
+
+    <!-- 查询指定角色的成员 -->
+    <select id="selectByGroupAndRole" resultType="net.lab1024.sa.admin.module.support.im.domain.entity.IMGroupMemberEntity">
+        SELECT *
+        FROM t_im_group_member
+        WHERE group_mapping_id = #{groupMappingId}
+          AND role_in_group = #{roleInGroup}
+          AND deleted_flag = 0
+        ORDER BY join_time ASC
+    </select>
+
+    <!-- 批量插入成员 -->
+    <insert id="batchInsert" parameterType="java.util.List">
+        INSERT INTO t_im_group_member (
+            group_mapping_id,
+            employee_id,
+            openim_user_id,
+            role_in_group,
+            join_type,
+            join_source,
+            join_time,
+            deleted_flag,
+            create_time,
+            update_time
+        ) VALUES
+        <foreach collection="members" item="item" separator=",">
+            (
+                #{item.groupMappingId},
+                #{item.employeeId},
+                #{item.openimUserId},
+                #{item.roleInGroup},
+                #{item.joinType},
+                #{item.joinSource},
+                #{item.joinTime},
+                0,
+                NOW(),
+                NOW()
+            )
+        </foreach>
+    </insert>
+
+    <!-- 更新成员角色 -->
+    <update id="updateMemberRole">
+        UPDATE t_im_group_member
+        SET role_in_group = #{roleInGroup},
+            update_time = NOW()
+        WHERE id = #{id}
+          AND deleted_flag = 0
+    </update>
+
+    <!-- 软删除成员 -->
+    <update id="softDelete">
+        UPDATE t_im_group_member
+        SET deleted_flag = 1,
+            update_time = NOW()
+        WHERE id = #{id}
+    </update>
+
+</mapper>

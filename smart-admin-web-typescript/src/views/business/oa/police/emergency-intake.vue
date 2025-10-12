@@ -263,32 +263,50 @@
 
       <!-- 右侧：专业信息录入 -->
       <div class="right-panel">
-        <!-- 上半部分：专业信息录入 -->
-        <div class="professional-section">
-          <h3 class="section-title">
-            <span class="section-icon" :style="{ color: typeColor }">{{ typeIcon }}</span>
-            {{ typeName }} 专业信息
-          </h3>
+        <!-- Tab切换：专业信息 / 即时聊天 -->
+        <a-tabs v-model:activeKey="rightPanelTab" class="right-panel-tabs">
+          <a-tab-pane key="professional" tab="专业信息">
+            <!-- 上半部分：专业信息录入 -->
+            <div class="professional-section">
+              <h3 class="section-title">
+                <span class="section-icon" :style="{ color: typeColor }">{{ typeIcon }}</span>
+                {{ typeName }} 专业信息
+              </h3>
 
-          <!-- 配置加载状态 -->
-          <div v-if="configLoading" class="config-loading">
-            <div class="loading-icon">⏳</div>
-            <div class="loading-text">正在加载表单配置...</div>
-          </div>
+              <!-- 配置加载状态 -->
+              <div v-if="configLoading" class="config-loading">
+                <div class="loading-icon">⏳</div>
+                <div class="loading-text">正在加载表单配置...</div>
+              </div>
 
-          <PoliceProfessionalFields
-            v-if="professionalFields.length > 0"
-            :fields="professionalFields"
-            :modelValue="professionalFieldData"
-            @update:modelValue="handleProfessionalFieldUpdate"
-          />
+              <PoliceProfessionalFields
+                v-if="professionalFields.length > 0"
+                :fields="professionalFields"
+                :modelValue="professionalFieldData"
+                @update:modelValue="handleProfessionalFieldUpdate"
+              />
 
-          <div v-else class="no-professional-fields">
-            <div class="placeholder-icon">📝</div>
-            <div class="placeholder-text">{{ typeName }} 无需额外专业信息</div>
-            <div class="placeholder-desc">请完善左侧基础信息后提交</div>
-          </div>
-        </div>
+              <div v-else class="no-professional-fields">
+                <div class="placeholder-icon">📝</div>
+                <div class="placeholder-text">{{ typeName }} 无需额外专业信息</div>
+                <div class="placeholder-desc">请完善左侧基础信息后提交</div>
+              </div>
+            </div>
+          </a-tab-pane>
+
+          <a-tab-pane key="chat" tab="即时聊天">
+            <!-- 聊天面板 -->
+            <ChatPanel
+              v-if="reportIdNum"
+              :report-id="reportIdNum"
+              :group-id="imGroupId"
+              :group-name="`警情-${formData.incidentLocation || '未命名'}`"
+            />
+            <div v-else class="chat-placeholder">
+              <a-empty description="请先保存警情后才能使用聊天功能" />
+            </div>
+          </a-tab-pane>
+        </a-tabs>
 
       </div>
 
@@ -348,6 +366,7 @@
   import { POLICE_REPORT_TYPE_ENUM, EMERGENCY_FORM_CONFIG } from '/@/constants/business/oa/police-report-const';
   import { policeReportApi } from '/@/api/business/oa/police-report-api';
   import { policeFormConfigApi, type PoliceFormConfigVO } from '/@/api/business/oa/police-form-config-api';
+  import { imBusinessApi } from '/@/api/business/oa/im-business-api';
   import { smartSentry } from '/@/lib/smart-sentry';
   import { DICT_CODE_ENUM } from '/@/constants/support/dict-const';
   import dayjs from 'dayjs';
@@ -392,6 +411,8 @@
   import CollaborationFieldIndicator from '/@/components/business/collaboration/CollaborationFieldIndicator.vue';
   // 导入用户Store
   import { useUserStore } from '/@/store/modules/system/user';
+  // 导入聊天组件
+  import ChatPanel from './components/ChatPanel.vue';
 
   const router = useRouter();
   const route = useRoute();
@@ -401,6 +422,11 @@
   const editReportId = ref<number | null>(null);
   // 🔧 页面初始化状态标志，防止初始加载时误触发字段变更通知
   const isPageInitializing = ref(false);
+
+  // 🔹 聊天相关状态
+  const rightPanelTab = ref<string>('professional');
+  const imGroupId = ref<string | undefined>(undefined);
+  const reportIdNum = computed(() => editReportId.value);
 
   // 🔧 防重复通知机制
   const recentNotifications = new Map<string, number>();
@@ -2356,6 +2382,9 @@
         console.log('📊 [Load Edit Data] 修复顺序：再加载表单配置（不会清空数据）');
         await loadFormConfig(data.reportType, false, true); // 第三个参数表示编辑模式加载
 
+        // 🆕 加载或创建 IM 群组
+        await ensureIMGroupExists(reportId);
+
         message.success('警情数据加载成功');
       }
     } catch (error) {
@@ -2381,6 +2410,73 @@
     } catch (error) {
       console.error('加载专业字段数据失败:', error);
       // 如果加载失败也不阻断编辑流程
+    }
+  }
+
+  /**
+   * 确保警情的 IM 群组存在
+   * 如果群组不存在，则创建新群组
+   *
+   * @param reportId 警情ID
+   */
+  async function ensureIMGroupExists(reportId: number) {
+    try {
+      console.log('📡 [IM群组] 检查警情群组是否存在, reportId:', reportId);
+
+      // 1. 检查群组是否已存在
+      const existsResponse = await imBusinessApi.checkGroupExists(reportId);
+      const exists = existsResponse.data;
+
+      if (exists) {
+        // 2. 群组已存在，获取群组ID
+        console.log('✅ [IM群组] 群组已存在，正在获取群组ID...');
+        const groupIdResponse = await imBusinessApi.getGroupByReportId(reportId);
+        const groupId = groupIdResponse.data; // 后端直接返回 String (groupId)
+
+        if (groupId) {
+          imGroupId.value = groupId;
+          console.log('✅ [IM群组] 群组ID获取成功:', imGroupId.value);
+        } else {
+          console.warn('⚠️ [IM群组] 群组ID为空，将尝试创建新群组');
+          await createNewIMGroup(reportId);
+        }
+      } else {
+        // 3. 群组不存在，创建新群组
+        console.log('⚠️ [IM群组] 群组不存在，正在创建新群组...');
+        await createNewIMGroup(reportId);
+      }
+
+    } catch (error) {
+      console.error('❌ [IM群组] 检查/创建群组失败:', error);
+      // 不抛出异常，允许页面继续加载（聊天功能不可用）
+      // 但给用户一个提示
+      message.warning('即时聊天功能初始化失败，您可以稍后刷新页面重试');
+    }
+  }
+
+  /**
+   * 创建新的 IM 群组
+   *
+   * @param reportId 警情ID
+   */
+  async function createNewIMGroup(reportId: number) {
+    try {
+      console.log('🆕 [IM群组] 开始创建新群组, reportId:', reportId);
+
+      const groupIdResponse = await imBusinessApi.createGroupForReport(reportId);
+      const groupId = groupIdResponse.data; // 后端直接返回 String (groupId)
+
+      if (groupId) {
+        imGroupId.value = groupId;
+        console.log('✅ [IM群组] 群组创建成功, groupId:', imGroupId.value);
+        message.success('即时聊天群组已创建');
+      } else {
+        console.error('❌ [IM群组] 群组创建返回数据异常:', groupId);
+        throw new Error('群组创建返回数据异常');
+      }
+    } catch (error) {
+      console.error('❌ [IM群组] 创建群组失败:', error);
+      throw error; // 向上抛出异常，由调用方处理
     }
   }
 
@@ -4556,5 +4652,34 @@
   background: #a8a8a8;
 }
 
-/* 强制更新缓存: 2025年09月28日 */
+/* 🔹 聊天面板样式 */
+.right-panel-tabs {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+
+  :deep(.ant-tabs-content-holder) {
+    flex: 1;
+    overflow: hidden;
+  }
+
+  :deep(.ant-tabs-content) {
+    height: 100%;
+  }
+
+  :deep(.ant-tabs-tabpane) {
+    height: 100%;
+  }
+}
+
+.chat-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 40px 20px;
+  text-align: center;
+}
+
+/* 强制更新缓存: 2025年10月09日 - 添加即时聊天功能 */
 </style>

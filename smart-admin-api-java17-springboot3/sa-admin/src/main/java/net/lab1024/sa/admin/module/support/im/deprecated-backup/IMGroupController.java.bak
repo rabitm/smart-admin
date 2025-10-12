@@ -1,0 +1,62 @@
+package net.lab1024.sa.admin.module.support.im.controller;
+
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import net.lab1024.sa.admin.module.support.im.service.IMGroupManagementService;
+import net.lab1024.sa.base.common.domain.RequestUser;
+import net.lab1024.sa.base.common.domain.ResponseDTO;
+import net.lab1024.sa.base.common.util.SmartRequestUtil;
+import org.springframework.web.bind.annotation.*;
+
+import jakarta.annotation.Resource;
+import java.util.List;
+
+/**
+ * IM群组管理Controller
+ *
+ * @Author Claude Code Assistant
+ * @Date 2025-10-09
+ * @Copyright <a href="https://1024lab.net">1024创新实验室</a>
+ */
+@Tag(name = "IM群组管理")
+@RestController
+@RequestMapping("/im/group")
+public class IMGroupController {
+
+    @Resource
+    private IMGroupManagementService imGroupManagementService;
+
+    @Operation(summary = "为警情创建IM群组")
+    @PostMapping("/create/{reportId}")
+    public ResponseDTO<String> createGroup(@PathVariable Long reportId) {
+        RequestUser requestUser = SmartRequestUtil.getRequestUser();
+        Long creatorId = requestUser.getUserId();
+        String groupId = imGroupManagementService.createGroupForReport(reportId, creatorId);
+        return ResponseDTO.ok(groupId);
+    }
+
+    @Operation(summary = "邀请成员入群")
+    @PostMapping("/{reportId}/invite")
+    public ResponseDTO<Void> inviteMembers(
+            @PathVariable Long reportId,
+            @RequestBody List<Long> employeeIds) {
+        imGroupManagementService.inviteMembers(reportId, employeeIds, "手动邀请");
+        return ResponseDTO.ok();
+    }
+
+    @Operation(summary = "移除群成员")
+    @PostMapping("/{reportId}/kick")
+    public ResponseDTO<Void> kickMembers(
+            @PathVariable Long reportId,
+            @RequestBody List<Long> employeeIds) {
+        imGroupManagementService.kickMembers(reportId, employeeIds, "管理员移除");
+        return ResponseDTO.ok();
+    }
+
+    @Operation(summary = "解散群组")
+    @PostMapping("/{reportId}/disband")
+    public ResponseDTO<Void> disbandGroup(@PathVariable Long reportId) {
+        imGroupManagementService.disbandGroup(reportId);
+        return ResponseDTO.ok();
+    }
+}

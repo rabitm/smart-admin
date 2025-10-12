@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="net.lab1024.sa.admin.module.support.im.dao.IMGroupMappingDao">
+
+    <resultMap id="BaseResultMap" type="net.lab1024.sa.admin.module.support.im.domain.entity.IMGroupMappingEntity">
+        <id column="id" property="id"/>
+        <result column="report_id" property="reportId"/>
+        <result column="openim_group_id" property="openimGroupId"/>
+        <result column="group_name" property="groupName"/>
+        <result column="group_type" property="groupType"/>
+        <result column="owner_user_id" property="ownerUserId"/>
+        <result column="owner_employee_id" property="ownerEmployeeId"/>
+        <result column="group_status" property="groupStatus"/>
+        <result column="member_count" property="memberCount"/>
+        <result column="max_member_count" property="maxMemberCount"/>
+        <result column="notification" property="notification"/>
+        <result column="introduction" property="introduction"/>
+        <result column="face_url" property="faceUrl"/>
+        <result column="need_verification" property="needVerification"/>
+        <result column="deleted_flag" property="deletedFlag"/>
+        <result column="create_time" property="createTime"/>
+        <result column="update_time" property="updateTime"/>
+    </resultMap>
+
+    <!-- 根据警情ID查询群组映射 -->
+    <select id="selectByReportId" resultMap="BaseResultMap">
+        SELECT *
+        FROM t_im_group_mapping
+        WHERE report_id = #{reportId}
+          AND deleted_flag = 0
+        LIMIT 1
+    </select>
+
+    <!-- 根据OpenIM群组ID查询映射 -->
+    <select id="selectByOpenimGroupId" resultMap="BaseResultMap">
+        SELECT *
+        FROM t_im_group_mapping
+        WHERE openim_group_id = #{openimGroupId}
+          AND deleted_flag = 0
+        LIMIT 1
+    </select>
+
+    <!-- 批量查询警情的群组映射 -->
+    <select id="selectByReportIds" resultMap="BaseResultMap">
+        SELECT *
+        FROM t_im_group_mapping
+        WHERE report_id IN
+        <foreach collection="reportIds" item="reportId" open="(" separator="," close=")">
+            #{reportId}
+        </foreach>
+        AND deleted_flag = 0
+    </select>
+
+    <!-- 查询指定状态的群组 -->
+    <select id="selectByStatus" resultMap="BaseResultMap">
+        SELECT *
+        FROM t_im_group_mapping
+        WHERE group_status = #{groupStatus}
+          AND deleted_flag = 0
+        <if test="limit != null">
+            LIMIT #{limit}
+        </if>
+    </select>
+
+    <!-- 更新成员数量 -->
+    <update id="updateMemberCount">
+        UPDATE t_im_group_mapping
+        SET member_count = #{memberCount},
+            update_time = NOW()
+        WHERE id = #{id}
+    </update>
+
+    <!-- 更新群组状态 -->
+    <update id="updateGroupStatus">
+        UPDATE t_im_group_mapping
+        SET group_status = #{groupStatus},
+            update_time = NOW()
+        WHERE id = #{id}
+    </update>
+
+</mapper>

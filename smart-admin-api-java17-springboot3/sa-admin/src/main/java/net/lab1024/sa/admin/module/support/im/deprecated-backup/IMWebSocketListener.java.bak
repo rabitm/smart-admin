@@ -1,0 +1,68 @@
+package net.lab1024.sa.admin.module.support.im.websocket;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import net.lab1024.sa.admin.module.support.websocket.domain.WebSocketSession;
+import net.lab1024.sa.admin.module.support.websocket.service.WebSocketSessionManager;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+
+/**
+ * IM WebSocket会话监听器
+ *
+ * 通过定时检查会话变化来清理断开连接的用户订阅
+ *
+ * @Author Claude Code Assistant
+ * @Date 2025-10-09
+ * @Copyright <a href="https://1024lab.net">1024创新实验室</a>
+ */
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class IMWebSocketListener {
+
+    private final IMWebSocketHandler imWebSocketHandler;
+    private final WebSocketSessionManager sessionManager;
+
+    // 记录上一次检查时的在线用户ID集合
+    private Set<Long> lastOnlineUserIds = new HashSet<>();
+
+    /**
+     * 定时检查会话变化，清理断开连接的用户订阅
+     * 每10秒执行一次
+     */
+    @Scheduled(fixedRate = 10000)
+    public void checkSessionChanges() {
+        try {
+            // 获取当前所有在线会话
+            List<WebSocketSession> sessions = sessionManager.getAllActiveSessions();
+            Set<Long> currentOnlineUserIds = new HashSet<>();
+
+            for (WebSocketSession session : sessions) {
+                if (session.getUserId() != null) {
+                    currentOnlineUserIds.add(session.getUserId());
+                }
+            }
+
+            // 找出断开连接的用户（上次在线但本次不在线）
+            Set<Long> disconnectedUserIds = new HashSet<>(lastOnlineUserIds);
+            disconnectedUserIds.removeAll(currentOnlineUserIds);
+
+            // 清理断开连接用户的订阅
+            for (Long userId : disconnectedUserIds) {
+                log.info("🔌 [IM WebSocket] 检测到用户{}断开连接，清理订阅", userId);
+                imWebSocketHandler.cleanupUserSubscriptions(userId);
+            }
+
+            // 更新在线用户列表
+            lastOnlineUserIds = currentOnlineUserIds;
+
+        } catch (Exception e) {
+            log.error("❌ [IM WebSocket] 检查会话变化失败", e);
+        }
+    }
+}

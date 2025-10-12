@@ -123,6 +123,12 @@ public class PoliceReportEntity {
     private String remark;
 
     /**
+     * IM群组ID
+     */
+    @DataTracerFieldLabel("IM群组ID")
+    private String imGroupId;
+
+    /**
      * 删除状态
      */
     private Boolean deletedFlag;

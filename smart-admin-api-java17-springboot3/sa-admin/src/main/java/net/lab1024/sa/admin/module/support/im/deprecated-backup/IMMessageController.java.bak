@@ -1,0 +1,58 @@
+package net.lab1024.sa.admin.module.support.im.controller;
+
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import net.lab1024.sa.admin.module.support.im.domain.form.SendMessageForm;
+import net.lab1024.sa.admin.module.support.im.domain.vo.MessageVO;
+import net.lab1024.sa.admin.module.support.im.service.IMMessageService;
+import net.lab1024.sa.base.common.domain.ResponseDTO;
+import net.lab1024.sa.base.common.domain.ValidateList;
+import org.springframework.web.bind.annotation.*;
+
+import jakarta.annotation.Resource;
+import jakarta.validation.Valid;
+import java.util.List;
+
+/**
+ * IM消息管理Controller
+ *
+ * @Author Claude Code Assistant
+ * @Date 2025-10-09
+ * @Copyright <a href="https://1024lab.net">1024创新实验室</a>
+ */
+@Tag(name = "IM消息管理")
+@RestController
+@RequestMapping("/im/message")
+public class IMMessageController {
+
+    @Resource
+    private IMMessageService imMessageService;
+
+    @Operation(summary = "发送群组消息")
+    @PostMapping("/send")
+    public ResponseDTO<String> sendMessage(@Valid @RequestBody SendMessageForm form) {
+        String messageId = imMessageService.sendGroupMessage(form.getReportId(), form.getContent());
+        return ResponseDTO.ok(messageId);
+    }
+
+    @Operation(summary = "获取群组消息历史")
+    @GetMapping("/history")
+    public ResponseDTO<List<MessageVO>> getMessageHistory(
+            @RequestParam Long reportId,
+            @RequestParam(required = false, defaultValue = "20") Integer count,
+            @RequestParam(required = false) String startMsgId
+    ) {
+        List<MessageVO> messages = imMessageService.getGroupMessageHistory(reportId, count, startMsgId);
+        return ResponseDTO.ok(messages);
+    }
+
+    @Operation(summary = "获取新消息")
+    @GetMapping("/new")
+    public ResponseDTO<List<MessageVO>> getNewMessages(
+            @RequestParam Long reportId,
+            @RequestParam(required = false) Long sinceTime
+    ) {
+        List<MessageVO> messages = imMessageService.getNewMessages(reportId, sinceTime);
+        return ResponseDTO.ok(messages);
+    }
+}

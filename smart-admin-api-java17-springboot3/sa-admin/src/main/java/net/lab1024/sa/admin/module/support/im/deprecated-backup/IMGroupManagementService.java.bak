@@ -1,0 +1,562 @@
+package net.lab1024.sa.admin.module.support.im.service;
+
+import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.JSONObject;
+import lombok.extern.slf4j.Slf4j;
+import net.lab1024.sa.admin.module.business.oa.police.dao.PoliceReportDao;
+import net.lab1024.sa.admin.module.business.oa.police.domain.entity.PoliceReportEntity;
+import net.lab1024.sa.admin.module.support.im.client.OpenIMClient;
+import net.lab1024.sa.admin.module.support.im.config.OpenIMConfig;
+import net.lab1024.sa.admin.module.support.im.constant.IMConstant;
+import net.lab1024.sa.admin.module.support.im.constant.IMErrorCodeEnum;
+import net.lab1024.sa.admin.module.support.im.constant.IMGroupRoleEnum;
+import net.lab1024.sa.admin.module.support.im.constant.IMOperationTypeEnum;
+import net.lab1024.sa.admin.module.support.im.dao.IMGroupMappingDao;
+import net.lab1024.sa.admin.module.support.im.dao.IMGroupMemberDao;
+import net.lab1024.sa.admin.module.support.im.domain.entity.IMGroupMappingEntity;
+import net.lab1024.sa.admin.module.support.im.domain.entity.IMGroupMemberEntity;
+import net.lab1024.sa.base.common.exception.BusinessException;
+import net.lab1024.sa.base.common.util.SmartStringUtil;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import jakarta.annotation.Resource;
+import java.time.LocalDateTime;
+import java.util.*;
+import java.util.stream.Collectors;
+
+/**
+ * IM群组管理服务
+ *
+ * @Author Claude Code Assistant
+ * @Date 2025-10-09
+ * @Copyright <a href="https://1024lab.net">1024创新实验室</a>
+ */
+@Slf4j
+@Service
+public class IMGroupManagementService {
+
+    @Resource
+    private OpenIMClient openIMClient;
+
+    @Resource
+    private OpenIMConfig openIMConfig;
+
+    @Resource
+    private PoliceReportDao policeReportDao;
+
+    @Resource
+    private IMGroupMappingDao imGroupMappingDao;
+
+    @Resource
+    private IMGroupMemberDao imGroupMemberDao;
+
+    @Resource
+    private IMUserSyncService imUserSyncService;
+
+    @Resource
+    private IMOperationLogService imOperationLogService;
+
+    /**
+     * 为警情创建IM群组
+     *
+     * @param reportId 警情ID
+     * @param creatorId 创建人员工ID
+     * @return OpenIM群组ID
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public String createGroupForReport(Long reportId, Long creatorId) {
+        if (reportId == null) {
+            throw new BusinessException(IMErrorCodeEnum.REPORT_ID_REQUIRED);
+        }
+        if (creatorId == null) {
+            throw new BusinessException(IMErrorCodeEnum.EMPLOYEE_ID_REQUIRED);
+        }
+
+        long startTime = System.currentTimeMillis();
+
+        try {
+            // 1. 检查群组是否已存在
+            IMGroupMappingEntity existingGroup = imGroupMappingDao.selectByReportId(reportId);
+            if (existingGroup != null) {
+                if (IMConstant.GROUP_STATUS_NORMAL.equals(existingGroup.getGroupStatus())) {
+                    log.info("👥 [群组创建] 警情{}的群组已存在: {}", reportId, existingGroup.getOpenimGroupId());
+                    return existingGroup.getOpenimGroupId();
+                }
+            }
+
+            // 2. 查询警情信息
+            PoliceReportEntity report = policeReportDao.selectById(reportId);
+            if (report == null) {
+                throw new BusinessException("警情不存在");
+            }
+
+            // 3. 确保创建人已同步到OpenIM
+            String ownerOpenimUserId = imUserSyncService.getOpenIMUserId(creatorId);
+
+            // 4. 生成群组ID和名称
+            String groupId = generateGroupId(reportId);
+            String groupName = generateGroupName(report);
+
+            // 5. 构建群组信息
+            Map<String, Object> groupInfo = buildGroupInfo(groupId, groupName, report);
+
+            // 6. 构建创建群组请求
+            // 注意: ownerUserID 会自动成为群成员,所以 memberUserIDs 应为空列表
+            // 根据 OpenIM v3.x API 规范,群主会自动加入,如果在 memberUserIDs 中重复添加会报错 "group member repeated"
+            Map<String, Object> requestBody = new HashMap<>();
+            requestBody.put("groupInfo", groupInfo);
+            requestBody.put("memberUserIDs", Collections.emptyList());  // 空列表,群主自动成为成员
+            requestBody.put("adminUserIDs", Collections.emptyList());
+            requestBody.put("ownerUserID", ownerOpenimUserId);
+
+            log.info("📤 [群组创建] 开始为警情{}创建群组: {}", reportId, groupId);
+
+            // 7. 调用OpenIM API创建群组
+            JSONObject response = openIMClient.postWithRetry(
+                    IMConstant.API_GROUP_CREATE,
+                    requestBody,
+                    JSONObject.class,
+                    IMOperationTypeEnum.GROUP_CREATE
+            );
+
+            // 8. 保存群组映射关系
+            saveGroupMapping(reportId, groupId, groupName, ownerOpenimUserId, creatorId);
+
+            // 9. 保存群主成员记录
+            saveGroupMember(reportId, creatorId, ownerOpenimUserId,
+                    IMGroupRoleEnum.OWNER.getCode(), IMConstant.JOIN_TYPE_AUTO, "群主");
+
+            // 10. 更新警情表的群组ID字段
+            updateReportGroupId(reportId, groupId);
+
+            int executionTime = (int) (System.currentTimeMillis() - startTime);
+
+            imOperationLogService.logSuccess(
+                    IMOperationTypeEnum.GROUP_CREATE,
+                    "GROUP",
+                    groupId,
+                    requestBody,
+                    response,
+                    executionTime
+            );
+
+            log.info("✅ [群组创建] 警情{}的群组创建成功: {}, 耗时: {}ms", reportId, groupId, executionTime);
+
+            return groupId;
+
+        } catch (BusinessException e) {
+            handleGroupOperationFailure(reportId, startTime, IMOperationTypeEnum.GROUP_CREATE, e.getMessage());
+            throw e;
+        } catch (Exception e) {
+            handleGroupOperationFailure(reportId, startTime, IMOperationTypeEnum.GROUP_CREATE, e.getMessage());
+            throw new BusinessException(e.getMessage());
+        }
+    }
+
+    /**
+     * 邀请成员入群
+     *
+     * @param reportId 警情ID
+     * @param employeeIds 员工ID列表
+     * @param reason 邀请原因
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void inviteMembers(Long reportId, List<Long> employeeIds, String reason) {
+        if (reportId == null) {
+            throw new BusinessException(IMErrorCodeEnum.REPORT_ID_REQUIRED);
+        }
+        if (employeeIds == null || employeeIds.isEmpty()) {
+            return;
+        }
+
+        long startTime = System.currentTimeMillis();
+
+        try {
+            // 1. 获取群组映射
+            IMGroupMappingEntity groupMapping = imGroupMappingDao.selectByReportId(reportId);
+            if (groupMapping == null) {
+                throw new BusinessException(IMErrorCodeEnum.GROUP_MAPPING_NOT_FOUND);
+            }
+
+            String groupId = groupMapping.getOpenimGroupId();
+
+            // 2. 过滤已在群中的成员
+            List<IMGroupMemberEntity> existingMembers = imGroupMemberDao.selectByGroupMappingId(groupMapping.getId());
+            Set<Long> existingEmployeeIds = existingMembers.stream()
+                    .filter(m -> !m.getDeletedFlag())
+                    .map(IMGroupMemberEntity::getEmployeeId)
+                    .collect(Collectors.toSet());
+
+            List<Long> newEmployeeIds = employeeIds.stream()
+                    .filter(id -> !existingEmployeeIds.contains(id))
+                    .collect(Collectors.toList());
+
+            if (newEmployeeIds.isEmpty()) {
+                log.info("⚠️ [群组邀请] 警情{}的所有成员已在群中", reportId);
+                return;
+            }
+
+            // 3. 检查群组成员数量限制
+            int currentMemberCount = groupMapping.getMemberCount();
+            int maxMembers = openIMConfig.getGroupMaxMembers();
+            if (currentMemberCount + newEmployeeIds.size() > maxMembers) {
+                throw new BusinessException(IMErrorCodeEnum.GROUP_MEMBER_LIMIT_EXCEEDED);
+            }
+
+            // 4. 批量获取OpenIM用户ID
+            final Map<Long, String> employeeOpenimUserIdMap1 = imUserSyncService.batchGetOpenIMUserIds(newEmployeeIds);
+
+            // 5. 需要同步的员工
+            List<Long> toSyncEmployeeIds = newEmployeeIds.stream()
+                    .filter(id -> !employeeOpenimUserIdMap1.containsKey(id))
+                    .collect(Collectors.toList());
+
+            Map<Long, String> employeeOpenimUserIdMap;
+            if (!toSyncEmployeeIds.isEmpty()) {
+                log.info("🔄 [群组邀请] 发现{}个未同步员工,先进行同步", toSyncEmployeeIds.size());
+                imUserSyncService.batchSyncUsers(toSyncEmployeeIds);
+                employeeOpenimUserIdMap = imUserSyncService.batchGetOpenIMUserIds(newEmployeeIds);
+            } else {
+                employeeOpenimUserIdMap = employeeOpenimUserIdMap1;
+            }
+
+            List<String> openimUserIds = new ArrayList<>(employeeOpenimUserIdMap.values());
+
+            // 6. 分批邀请
+            int batchSize = openIMConfig.getGroupInviteBatchSize();
+            List<List<String>> batches = partition(openimUserIds, batchSize);
+
+            log.info("📤 [群组邀请] 开始邀请{}个成员到群组{}, 分{}批处理",
+                    openimUserIds.size(), groupId, batches.size());
+
+            for (int i = 0; i < batches.size(); i++) {
+                List<String> batch = batches.get(i);
+                inviteBatch(groupId, batch, reason);
+                log.info("✅ [群组邀请] 第{}/{}批完成, 数量: {}", i + 1, batches.size(), batch.size());
+            }
+
+            // 7. 保存成员记录
+            for (Map.Entry<Long, String> entry : employeeOpenimUserIdMap.entrySet()) {
+                saveGroupMember(reportId, entry.getKey(), entry.getValue(),
+                        IMGroupRoleEnum.MEMBER.getCode(), IMConstant.JOIN_TYPE_MANUAL, reason);
+            }
+
+            // 8. 更新群组成员数量
+            int newMemberCount = currentMemberCount + newEmployeeIds.size();
+            imGroupMappingDao.updateMemberCount(groupMapping.getId(), newMemberCount);
+
+            int executionTime = (int) (System.currentTimeMillis() - startTime);
+
+            log.info("✅ [群组邀请] 警情{}邀请{}个成员完成, 耗时: {}ms",
+                    reportId, newEmployeeIds.size(), executionTime);
+
+        } catch (BusinessException e) {
+            handleGroupOperationFailure(reportId, startTime, IMOperationTypeEnum.GROUP_INVITE, e.getMessage());
+            throw e;
+        } catch (Exception e) {
+            handleGroupOperationFailure(reportId, startTime, IMOperationTypeEnum.GROUP_INVITE, e.getMessage());
+            throw new BusinessException(e.getMessage());
+        }
+    }
+
+    /**
+     * 批量邀请成员
+     */
+    private void inviteBatch(String groupId, List<String> openimUserIds, String reason) {
+        Map<String, Object> requestBody = new HashMap<>();
+        requestBody.put("groupID", groupId);
+        requestBody.put("invitedUserIDs", openimUserIds);
+        requestBody.put("reason", reason != null ? reason : "邀请加入群组");
+
+        openIMClient.postWithRetry(
+                IMConstant.API_GROUP_INVITE,
+                requestBody,
+                JSONObject.class,
+                IMOperationTypeEnum.GROUP_INVITE
+        );
+    }
+
+    /**
+     * 移除群成员
+     *
+     * @param reportId 警情ID
+     * @param employeeIds 员工ID列表
+     * @param reason 移除原因
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void kickMembers(Long reportId, List<Long> employeeIds, String reason) {
+        if (reportId == null) {
+            throw new BusinessException(IMErrorCodeEnum.REPORT_ID_REQUIRED);
+        }
+        if (employeeIds == null || employeeIds.isEmpty()) {
+            return;
+        }
+
+        long startTime = System.currentTimeMillis();
+
+        try {
+            // 1. 获取群组映射
+            IMGroupMappingEntity groupMapping = imGroupMappingDao.selectByReportId(reportId);
+            if (groupMapping == null) {
+                throw new BusinessException(IMErrorCodeEnum.GROUP_MAPPING_NOT_FOUND);
+            }
+
+            String groupId = groupMapping.getOpenimGroupId();
+
+            // 2. 查询成员信息并过滤群主
+            List<IMGroupMemberEntity> members = imGroupMemberDao.selectByGroupMappingId(groupMapping.getId());
+            Map<Long, IMGroupMemberEntity> memberMap = members.stream()
+                    .filter(m -> !m.getDeletedFlag() && employeeIds.contains(m.getEmployeeId()))
+                    .collect(Collectors.toMap(IMGroupMemberEntity::getEmployeeId, m -> m));
+
+            // 检查是否包含群主
+            boolean hasOwner = memberMap.values().stream()
+                    .anyMatch(m -> IMGroupRoleEnum.OWNER.getCode().equals(m.getRoleInGroup()));
+
+            if (hasOwner) {
+                throw new BusinessException(IMErrorCodeEnum.CANNOT_KICK_OWNER);
+            }
+
+            if (memberMap.isEmpty()) {
+                log.warn("⚠️ [群组移除] 警情{}的待移除成员不在群中", reportId);
+                return;
+            }
+
+            // 3. 获取OpenIM用户ID列表
+            List<String> openimUserIds = memberMap.values().stream()
+                    .map(IMGroupMemberEntity::getOpenimUserId)
+                    .collect(Collectors.toList());
+
+            // 4. 调用OpenIM API移除成员
+            Map<String, Object> requestBody = new HashMap<>();
+            requestBody.put("groupID", groupId);
+            requestBody.put("kickedUserIDs", openimUserIds);
+            requestBody.put("reason", reason != null ? reason : "移除出群");
+
+            log.info("📤 [群组移除] 从群组{}移除{}个成员", groupId, openimUserIds.size());
+
+            openIMClient.postWithRetry(
+                    IMConstant.API_GROUP_KICK,
+                    requestBody,
+                    JSONObject.class,
+                    IMOperationTypeEnum.GROUP_KICK
+            );
+
+            // 5. 软删除成员记录
+            for (IMGroupMemberEntity member : memberMap.values()) {
+                imGroupMemberDao.softDelete(member.getId());
+            }
+
+            // 6. 更新群组成员数量
+            int newMemberCount = groupMapping.getMemberCount() - memberMap.size();
+            imGroupMappingDao.updateMemberCount(groupMapping.getId(), newMemberCount);
+
+            int executionTime = (int) (System.currentTimeMillis() - startTime);
+
+            log.info("✅ [群组移除] 警情{}移除{}个成员完成, 耗时: {}ms",
+                    reportId, memberMap.size(), executionTime);
+
+        } catch (BusinessException e) {
+            handleGroupOperationFailure(reportId, startTime, IMOperationTypeEnum.GROUP_KICK, e.getMessage());
+            throw e;
+        } catch (Exception e) {
+            handleGroupOperationFailure(reportId, startTime, IMOperationTypeEnum.GROUP_KICK, e.getMessage());
+            throw new BusinessException(e.getMessage());
+        }
+    }
+
+    /**
+     * 解散群组
+     *
+     * @param reportId 警情ID
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void disbandGroup(Long reportId) {
+        if (reportId == null) {
+            throw new BusinessException(IMErrorCodeEnum.REPORT_ID_REQUIRED);
+        }
+
+        long startTime = System.currentTimeMillis();
+
+        try {
+            // 1. 获取群组映射
+            IMGroupMappingEntity groupMapping = imGroupMappingDao.selectByReportId(reportId);
+            if (groupMapping == null) {
+                throw new BusinessException(IMErrorCodeEnum.GROUP_MAPPING_NOT_FOUND);
+            }
+
+            if (IMConstant.GROUP_STATUS_DISBANDED.equals(groupMapping.getGroupStatus())) {
+                log.info("⚠️ [群组解散] 群组{}已解散", groupMapping.getOpenimGroupId());
+                return;
+            }
+
+            String groupId = groupMapping.getOpenimGroupId();
+
+            // 2. 调用OpenIM API解散群组
+            Map<String, Object> requestBody = new HashMap<>();
+            requestBody.put("groupID", groupId);
+
+            log.info("📤 [群组解散] 开始解散群组: {}", groupId);
+
+            openIMClient.postWithRetry(
+                    IMConstant.API_GROUP_DISBAND,
+                    requestBody,
+                    JSONObject.class,
+                    IMOperationTypeEnum.GROUP_DISBAND
+            );
+
+            // 3. 更新群组状态
+            imGroupMappingDao.updateGroupStatus(groupMapping.getId(), IMConstant.GROUP_STATUS_DISBANDED);
+
+            // 4. 软删除所有成员
+            List<IMGroupMemberEntity> members = imGroupMemberDao.selectByGroupMappingId(groupMapping.getId());
+            for (IMGroupMemberEntity member : members) {
+                if (!member.getDeletedFlag()) {
+                    imGroupMemberDao.softDelete(member.getId());
+                }
+            }
+
+            int executionTime = (int) (System.currentTimeMillis() - startTime);
+
+            log.info("✅ [群组解散] 警情{}的群组解散成功, 耗时: {}ms", reportId, executionTime);
+
+        } catch (BusinessException e) {
+            handleGroupOperationFailure(reportId, startTime, IMOperationTypeEnum.GROUP_DISBAND, e.getMessage());
+            throw e;
+        } catch (Exception e) {
+            handleGroupOperationFailure(reportId, startTime, IMOperationTypeEnum.GROUP_DISBAND, e.getMessage());
+            throw new BusinessException(e.getMessage());
+        }
+    }
+
+    /**
+     * 生成群组ID
+     */
+    private String generateGroupId(Long reportId) {
+        return IMConstant.GROUP_ID_PREFIX + reportId;
+    }
+
+    /**
+     * 生成群组名称
+     */
+    private String generateGroupName(PoliceReportEntity report) {
+        String template = openIMConfig.getGroupNameTemplate();
+        if (SmartStringUtil.isBlank(template)) {
+            template = IMConstant.DEFAULT_GROUP_NAME_TEMPLATE;
+        }
+
+        return template.replace("{reportNumber}", report.getReportNumber())
+                .replace("{reportId}", String.valueOf(report.getReportId()));
+    }
+
+    /**
+     * 构建群组信息
+     */
+    private Map<String, Object> buildGroupInfo(String groupId, String groupName, PoliceReportEntity report) {
+        Map<String, Object> groupInfo = new HashMap<>();
+        groupInfo.put("groupID", groupId);
+        groupInfo.put("groupName", groupName);
+        groupInfo.put("groupType", IMConstant.GROUP_TYPE_WORK);
+        groupInfo.put("notification", "警情处理工作群");
+        groupInfo.put("introduction", "警情编号: " + report.getReportNumber());
+        groupInfo.put("needVerification", 0);  // 0 = 不需要验证 (OpenIM v3.x requires int32, not boolean)
+        groupInfo.put("lookMemberInfo", 1);
+        groupInfo.put("applyMemberFriend", 0);
+
+        // 扩展字段
+        Map<String, Object> ex = new HashMap<>();
+        ex.put("reportId", report.getReportId());
+        ex.put("reportType", report.getReportType());
+        ex.put("reportLevel", report.getReportLevel());
+        groupInfo.put("ex", JSON.toJSONString(ex));
+
+        return groupInfo;
+    }
+
+    /**
+     * 保存群组映射
+     */
+    private void saveGroupMapping(Long reportId, String groupId, String groupName,
+                                  String ownerOpenimUserId, Long ownerEmployeeId) {
+        IMGroupMappingEntity mapping = new IMGroupMappingEntity();
+        mapping.setReportId(reportId);
+        mapping.setOpenimGroupId(groupId);
+        mapping.setGroupName(groupName);
+        mapping.setGroupType(IMConstant.GROUP_TYPE_WORK);
+        mapping.setOwnerUserId(ownerOpenimUserId);
+        mapping.setOwnerEmployeeId(ownerEmployeeId);
+        mapping.setGroupStatus(IMConstant.GROUP_STATUS_NORMAL);
+        mapping.setMemberCount(1);
+        mapping.setMaxMemberCount(openIMConfig.getGroupMaxMembers());
+        mapping.setNeedVerification(false);
+        mapping.setDeletedFlag(false);
+
+        imGroupMappingDao.insert(mapping);
+    }
+
+    /**
+     * 保存群成员记录
+     */
+    private void saveGroupMember(Long reportId, Long employeeId, String openimUserId,
+                                 Integer roleInGroup, Integer joinType, String joinSource) {
+        IMGroupMappingEntity groupMapping = imGroupMappingDao.selectByReportId(reportId);
+        if (groupMapping == null) {
+            return;
+        }
+
+        IMGroupMemberEntity member = new IMGroupMemberEntity();
+        member.setGroupMappingId(groupMapping.getId());
+        member.setEmployeeId(employeeId);
+        member.setOpenimUserId(openimUserId);
+        member.setRoleInGroup(roleInGroup);
+        member.setJoinType(joinType);
+        member.setJoinSource(joinSource);
+        member.setJoinTime(LocalDateTime.now());
+        member.setDeletedFlag(false);
+
+        imGroupMemberDao.insert(member);
+    }
+
+    /**
+     * 更新警情表的群组ID
+     */
+    private void updateReportGroupId(Long reportId, String groupId) {
+        try {
+            PoliceReportEntity report = new PoliceReportEntity();
+            report.setReportId(reportId);
+            report.setImGroupId(groupId);
+            policeReportDao.updateById(report);
+        } catch (Exception e) {
+            log.warn("⚠️ 更新警情{}的群组ID失败: {}", reportId, e.getMessage());
+        }
+    }
+
+    /**
+     * 处理群组操作失败
+     */
+    private void handleGroupOperationFailure(Long reportId, long startTime,
+                                            IMOperationTypeEnum operationType, String errorMessage) {
+        int executionTime = (int) (System.currentTimeMillis() - startTime);
+
+        imOperationLogService.logFailure(
+                operationType,
+                "GROUP",
+                String.valueOf(reportId),
+                null,
+                errorMessage,
+                executionTime
+        );
+    }
+
+    /**
+     * 分批处理列表
+     */
+    private <T> List<List<T>> partition(List<T> list, int size) {
+        List<List<T>> partitions = new ArrayList<>();
+        for (int i = 0; i < list.size(); i += size) {
+            partitions.add(list.subList(i, Math.min(i + size, list.size())));
+        }
+        return partitions;
+    }
+}

@@ -116,7 +116,19 @@ export const useUserStore = defineStore({
   },
 
   actions: {
-    logout() {
+    async logout() {
+      // 登出 OpenIM
+      try {
+        const { openIMClient } = await import('/@/utils/openim-client');
+        if (openIMClient.loggedIn) {
+          await openIMClient.logout();
+          console.log('✅ [OpenIM] OpenIM 登出成功');
+        }
+      } catch (error) {
+        console.error('❌ [OpenIM] OpenIM 登出失败:', error);
+      }
+
+      // 清除 SmartAdmin 登录状态
       this.token = '';
       this.menuList = [];
       this.tagNav = [];
@@ -160,6 +172,25 @@ export const useUserStore = defineStore({
       }
     },
 
+    // 初始化 OpenIM 连接（新架构）
+    async initOpenIMConnection() {
+      try {
+        console.log('🚀 [OpenIM] 开始初始化 OpenIM 连接...');
+
+        // 动态导入 OpenIM 客户端
+        const { openIMClient } = await import('/@/utils/openim-client');
+
+        // 登录 OpenIM（会自动从后端获取 Token）
+        await openIMClient.loginWithSmartAdmin();
+
+        console.log('✅ [OpenIM] OpenIM 连接已建立');
+      } catch (error) {
+        console.error('❌ [OpenIM] OpenIM 连接初始化失败:', error);
+        // 不抛出错误，避免影响主登录流程
+        // OpenIM 连接失败不应该影响用户使用其他功能
+      }
+    },
+
     //设置登录信息
     setUserLoginInfo(data) {
       // 用户基本信息
@@ -197,6 +228,9 @@ export const useUserStore = defineStore({
 
       // 用户登录成功后，重新连接WebSocket
       this.initWebSocketConnection();
+
+      // 用户登录成功后，初始化 OpenIM 连接（新架构）
+      this.initOpenIMConnection();
     },
 
     setToken(token) {

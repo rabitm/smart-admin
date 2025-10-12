@@ -1,0 +1,312 @@
+package net.lab1024.sa.admin.module.support.im.service;
+
+import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.JSONArray;
+import com.alibaba.fastjson.JSONObject;
+import lombok.extern.slf4j.Slf4j;
+import net.lab1024.sa.admin.module.support.im.client.OpenIMClient;
+import net.lab1024.sa.admin.module.support.im.constant.IMConstant;
+import net.lab1024.sa.admin.module.support.im.constant.IMErrorCodeEnum;
+import net.lab1024.sa.admin.module.support.im.constant.IMOperationTypeEnum;
+import net.lab1024.sa.admin.module.support.im.dao.IMGroupMappingDao;
+import net.lab1024.sa.admin.module.support.im.dao.IMUserMappingDao;
+import net.lab1024.sa.admin.module.support.im.domain.entity.IMGroupMappingEntity;
+import net.lab1024.sa.admin.module.support.im.domain.entity.IMUserMappingEntity;
+import net.lab1024.sa.admin.module.support.im.domain.vo.MessageVO;
+import net.lab1024.sa.base.common.domain.RequestUser;
+import net.lab1024.sa.base.common.exception.BusinessException;
+import net.lab1024.sa.base.common.util.SmartRequestUtil;
+import org.springframework.stereotype.Service;
+
+import jakarta.annotation.Resource;
+import net.lab1024.sa.admin.module.support.im.websocket.IMWebSocketHandler;
+import java.util.*;
+import java.util.stream.Collectors;
+
+/**
+ * IM消息服务
+ *
+ * @Author Claude Code Assistant
+ * @Date 2025-10-09
+ * @Copyright <a href="https://1024lab.net">1024创新实验室</a>
+ */
+@Slf4j
+@Service
+public class IMMessageService {
+
+    @Resource
+    private OpenIMClient openIMClient;
+
+    @Resource
+    private IMGroupMappingDao imGroupMappingDao;
+
+    @Resource
+    private IMUserMappingDao imUserMappingDao;
+
+    @Resource
+    private IMWebSocketHandler imWebSocketHandler;
+
+    @Resource
+    private IMGroupManagementService imGroupManagementService;
+
+    /**
+     * 发送群组文本消息
+     *
+     * @param reportId 警情ID
+     * @param content 消息内容
+     * @return 消息ID
+     */
+    public String sendGroupMessage(Long reportId, String content) {
+        // 1. 获取当前用户
+        RequestUser requestUser = SmartRequestUtil.getRequestUser();
+        if (requestUser == null) {
+            throw new BusinessException(IMErrorCodeEnum.USER_NOT_LOGIN);
+        }
+
+        Long senderId = requestUser.getUserId();
+        String senderName = requestUser.getUserName();
+
+        // 2. 获取群组信息，如果不存在则自动创建
+        IMGroupMappingEntity groupMapping = imGroupMappingDao.selectByReportId(reportId);
+        if (groupMapping == null) {
+            log.info("📭 [消息发送] 警情{}的群组尚未创建，自动创建群组", reportId);
+            try {
+                // 自动创建群组（当前用户作为创建者）
+                imGroupManagementService.createGroupForReport(reportId, senderId);
+                // 重新查询群组信息
+                groupMapping = imGroupMappingDao.selectByReportId(reportId);
+                if (groupMapping == null) {
+                    throw new BusinessException("群组创建失败，请稍后重试");
+                }
+                log.info("✅ [消息发送] 群组自动创建成功, GroupID: {}", groupMapping.getOpenimGroupId());
+            } catch (Exception e) {
+                log.error("❌ [消息发送] 自动创建群组失败", e);
+                throw new BusinessException("群组创建失败: " + e.getMessage());
+            }
+        }
+
+        String groupId = groupMapping.getOpenimGroupId();
+
+        // 3. 获取发送者的OpenIM用户ID
+        IMUserMappingEntity userMapping = imUserMappingDao.selectByEmployeeId(senderId);
+        if (userMapping == null || !IMConstant.SYNC_STATUS_SUCCESS.equals(userMapping.getSyncStatus())) {
+            throw new BusinessException(IMErrorCodeEnum.USER_NOT_SYNCED);
+        }
+
+        String openimSenderId = userMapping.getOpenimUserId();
+
+        // 4. 构建消息请求
+        Map<String, Object> messageContent = new HashMap<>();
+        messageContent.put("content", content);  // ✅ OpenIM v3.x requires "content" field (not "text")
+
+        Map<String, Object> requestBody = new HashMap<>();
+        requestBody.put("sendID", openimSenderId);
+        requestBody.put("recvID", groupId);
+        requestBody.put("groupID", groupId);
+        requestBody.put("senderNickname", senderName);
+        requestBody.put("senderFaceURL", "");
+        requestBody.put("sessionType", 3); // 3-群聊
+        requestBody.put("msgFrom", 100); // 100-用户发送
+        requestBody.put("contentType", 101); // 101-文本消息
+        requestBody.put("content", messageContent);  // ✅ 直接传Map对象,不转JSON字符串 (OpenIM v3.x expects map[string]interface{})
+        requestBody.put("sendTime", System.currentTimeMillis());
+
+        // 5. 调用OpenIM API发送消息
+        log.info("📤 [消息发送] 群组: {}, 发送者: {}, 内容: {}", groupId, senderName, content);
+
+        try {
+            JSONObject response = openIMClient.postWithRetry(
+                    IMConstant.API_MESSAGE_SEND,
+                    requestBody,
+                    JSONObject.class,
+                    IMOperationTypeEnum.MESSAGE_SEND
+            );
+
+            // 从响应中提取消息ID
+            String clientMsgID = response.getString("clientMsgID");
+
+            log.info("✅ [消息发送] 发送成功, MessageID: {}", clientMsgID);
+
+            // ✨ WebSocket实时推送：广播新消息给所有订阅者
+            try {
+                MessageVO messageVO = new MessageVO();
+                messageVO.setMessageId(clientMsgID);
+                messageVO.setSenderId(openimSenderId);
+                messageVO.setSenderName(senderName);
+                messageVO.setContent(content);
+                messageVO.setContentType(101);
+                messageVO.setSendTime(System.currentTimeMillis());
+                messageVO.setIsSelf(false); // 对接收者来说不是自己发的
+
+                Map<String, Object> messageData = new HashMap<>();
+                messageData.put("reportId", reportId);
+                messageData.put("messageId", messageVO.getMessageId());
+                messageData.put("senderId", messageVO.getSenderId());
+                messageData.put("senderName", messageVO.getSenderName());
+                messageData.put("content", messageVO.getContent());
+                messageData.put("contentType", messageVO.getContentType());
+                messageData.put("sendTime", messageVO.getSendTime());
+                messageData.put("isSelf", false);
+
+                int subscriberCount = imWebSocketHandler.broadcastNewMessage(reportId, messageData);
+                log.info("📡 [WebSocket推送] 消息已推送给{}个订阅者", subscriberCount);
+
+                // 通知发送者消息发送成功
+                imWebSocketHandler.notifyMessageSent(senderId, messageData);
+            } catch (Exception wsError) {
+                log.error("⚠️ [WebSocket推送] 推送失败，但消息已发送成功", wsError);
+            }
+
+            return clientMsgID;
+
+        } catch (Exception e) {
+            log.error("❌ [消息发送] 发送失败", e);
+
+            // ✨ 通知发送者消息发送失败
+            try {
+                if (requestUser != null) {
+                    imWebSocketHandler.notifyMessageError(requestUser.getUserId(), e.getMessage());
+                }
+            } catch (Exception wsError) {
+                log.error("⚠️ [WebSocket通知] 发送失败通知异常", wsError);
+            }
+
+            throw new BusinessException("消息发送失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 获取群组消息历史
+     *
+     * @param reportId 警情ID
+     * @param count 消息数量
+     * @param startMsgId 起始消息ID(用于分页)
+     * @return 消息列表
+     */
+    public List<MessageVO> getGroupMessageHistory(Long reportId, Integer count, String startMsgId) {
+        // 1. 获取群组信息
+        IMGroupMappingEntity groupMapping = imGroupMappingDao.selectByReportId(reportId);
+        if (groupMapping == null) {
+            log.info("📭 [消息查询] 警情{}的群组尚未创建，返回空消息列表", reportId);
+            return Collections.emptyList();
+        }
+
+        String groupId = groupMapping.getOpenimGroupId();
+
+        // 2. 构建请求
+        Map<String, Object> requestBody = new HashMap<>();
+        requestBody.put("groupID", groupId);
+        requestBody.put("count", count != null ? count : 20);
+        if (startMsgId != null && !startMsgId.isEmpty()) {
+            requestBody.put("startClientMsgID", startMsgId);
+        }
+
+        // 3. 调用OpenIM API获取消息
+        log.info("📥 [消息查询] 群组: {}, 数量: {}", groupId, count);
+
+        try {
+            JSONObject response = openIMClient.postWithRetry(
+                    IMConstant.API_MESSAGE_HISTORY,
+                    requestBody,
+                    JSONObject.class,
+                    IMOperationTypeEnum.MESSAGE_QUERY
+            );
+
+            // 4. 解析消息列表
+            JSONArray messageList = response.getJSONArray("messageList");
+            if (messageList == null || messageList.isEmpty()) {
+                log.info("📭 [消息查询] 暂无消息");
+                return Collections.emptyList();
+            }
+
+            List<MessageVO> messages = new ArrayList<>();
+            RequestUser currentUser = SmartRequestUtil.getRequestUser();
+            Long currentUserId = currentUser != null ? currentUser.getUserId() : null;
+
+            for (int i = 0; i < messageList.size(); i++) {
+                JSONObject msgJson = messageList.getJSONObject(i);
+                MessageVO message = parseMessage(msgJson, currentUserId);
+                if (message != null) {
+                    messages.add(message);
+                }
+            }
+
+            log.info("✅ [消息查询] 查询成功, 数量: {}", messages.size());
+
+            return messages;
+
+        } catch (Exception e) {
+            log.error("❌ [消息查询] 查询失败", e);
+            throw new BusinessException("消息查询失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 获取新消息(指定时间之后的消息)
+     *
+     * @param reportId 警情ID
+     * @param sinceTime 时间戳(毫秒)
+     * @return 新消息列表
+     */
+    public List<MessageVO> getNewMessages(Long reportId, Long sinceTime) {
+        // 获取消息历史，然后过滤出指定时间之后的消息
+        List<MessageVO> allMessages = getGroupMessageHistory(reportId, 50, null);
+
+        if (sinceTime == null) {
+            return allMessages;
+        }
+
+        // 过滤出新消息
+        List<MessageVO> newMessages = allMessages.stream()
+                .filter(msg -> msg.getSendTime() > sinceTime)
+                .collect(Collectors.toList());
+
+        log.info("🆕 [新消息] 查询到{}条新消息 (since: {})", newMessages.size(), sinceTime);
+
+        return newMessages;
+    }
+
+    /**
+     * 解析OpenIM消息为MessageVO
+     */
+    private MessageVO parseMessage(JSONObject msgJson, Long currentUserId) {
+        try {
+            MessageVO message = new MessageVO();
+
+            message.setMessageId(msgJson.getString("clientMsgID"));
+            message.setConversationId(msgJson.getString("conversationID"));
+            message.setSenderId(msgJson.getString("sendID"));
+            message.setSenderName(msgJson.getString("senderNickname"));
+            message.setSenderAvatar(msgJson.getString("senderFaceURL"));
+            message.setContentType(msgJson.getInteger("contentType"));
+            message.setSendTime(msgJson.getLong("sendTime"));
+            message.setSeq(msgJson.getLong("seq"));
+
+            // 解析消息内容
+            String contentStr = msgJson.getString("content");
+            if (contentStr != null && !contentStr.isEmpty()) {
+                JSONObject contentJson = JSON.parseObject(contentStr);
+                message.setContent(contentJson.getString("text"));
+            }
+
+            // 判断是否是自己发送的消息
+            if (currentUserId != null) {
+                IMUserMappingEntity userMapping = imUserMappingDao.selectByEmployeeId(currentUserId);
+                if (userMapping != null) {
+                    String myOpenimUserId = userMapping.getOpenimUserId();
+                    message.setIsSelf(myOpenimUserId.equals(message.getSenderId()));
+                } else {
+                    message.setIsSelf(false);
+                }
+            } else {
+                message.setIsSelf(false);
+            }
+
+            return message;
+
+        } catch (Exception e) {
+            log.error("❌ [消息解析] 解析失败", e);
+            return null;
+        }
+    }
+}

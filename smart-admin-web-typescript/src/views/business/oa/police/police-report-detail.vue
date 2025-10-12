@@ -111,6 +111,17 @@
             :reportNumber="detailData.reportNumber"
           />
         </a-tab-pane>
+
+        <!-- 即时聊天Tab -->
+        <a-tab-pane key="chat" tab="即时聊天">
+          <ChatPanel
+            v-if="detailData.reportId"
+            :report-id="Number(detailData.reportId)"
+            :group-id="detailData.imGroupId"
+            :group-name="`警情-${detailData.reportNumber || '未命名'}`"
+          />
+          <a-empty v-else description="加载中..." />
+        </a-tab-pane>
       </a-tabs>
     </div>
 
@@ -125,10 +136,12 @@
   import { message, Modal } from 'ant-design-vue';
   import { SmartLoading } from '/@/components/framework/smart-loading';
   import { policeReportApi } from '/@/api/business/oa/police-report-api';
+  import { imBusinessApi } from '/@/api/business/oa/im-business-api';
   import { smartSentry } from '/@/lib/smart-sentry';
   import PoliceReportOperate from './components/police-report-operate-modal.vue';
   import PoliceOperationTimeline from './components/police-operation-timeline.vue';
   import CompactOperationHistory from './components/compact-operation-history.vue';
+  import ChatPanel from './components/ChatPanel.vue';
 
   const route = useRoute();
   const router = useRouter();
@@ -138,6 +151,7 @@
   const activeTab = ref('basic');
   const operateRef = ref();
   const useCompactTimeline = ref(true); // 默认使用紧凑模式
+  const imGroupId = ref<string | undefined>(undefined);
 
   const reportId = route.query.reportId;
 
@@ -151,10 +165,58 @@
       loading.value = true;
       let responseModel = await policeReportApi.getDetail(reportId);
       detailData.value = responseModel.data;
+
+      // 🆕 加载或创建 IM 群组
+      await ensureIMGroupExists(Number(reportId));
     } catch (e) {
       smartSentry.captureError(e);
     } finally {
       loading.value = false;
+    }
+  }
+
+  /**
+   * 确保 IM 群组存在
+   *
+   * 策略: 直接调用创建接口，后端会自动检测并修复同步问题
+   */
+  async function ensureIMGroupExists(reportId: number) {
+    try {
+      console.log('📡 [警情详情-IM群组] 开始创建/获取群组, reportId:', reportId);
+
+      // 直接调用创建接口 - 后端会自动处理以下情况：
+      // 1. 群组不存在 → 创建新群组
+      // 2. 群组存在且验证通过 → 返回现有 groupId
+      // 3. 数据库有映射但服务器无群组 → 自动删除旧映射并重新创建
+      await createNewIMGroup(reportId);
+
+    } catch (error) {
+      console.error('❌ [警情详情-IM群组] 创建/获取群组失败:', error);
+      // 不显示错误提示，让用户可以继续查看其他内容
+    }
+  }
+
+  /**
+   * 创建新的 IM 群组
+   */
+  async function createNewIMGroup(reportId: number) {
+    try {
+      console.log('🆕 [警情详情-IM群组] 开始创建新群组, reportId:', reportId);
+
+      const groupIdResponse = await imBusinessApi.createGroupForReport(reportId);
+      const groupId = groupIdResponse.data; // 后端直接返回 String (groupId)
+
+      if (groupId) {
+        imGroupId.value = groupId;
+        detailData.value.imGroupId = groupId; // 同步到 detailData
+        console.log('✅ [警情详情-IM群组] 群组创建成功, groupId:', imGroupId.value);
+      } else {
+        console.error('❌ [警情详情-IM群组] 群组创建返回数据异常:', groupId);
+        throw new Error('群组创建返回数据异常');
+      }
+    } catch (error) {
+      console.error('❌ [警情详情-IM群组] 创建群组失败:', error);
+      throw error;
     }
   }
 

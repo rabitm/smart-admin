@@ -1,0 +1,212 @@
+package net.lab1024.sa.admin.module.support.im.websocket;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import net.lab1024.sa.admin.module.support.websocket.domain.WebSocketMessage;
+import net.lab1024.sa.admin.module.support.websocket.service.impl.WebSocketTransport;
+import org.springframework.stereotype.Component;
+
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+
+/**
+ * IM WebSocket消息处理器
+ *
+ * @Author Claude Code Assistant
+ * @Date 2025-10-09
+ * @Copyright <a href="https://1024lab.net">1024创新实验室</a>
+ */
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class IMWebSocketHandler {
+
+    private final WebSocketTransport webSocketTransport;
+    private final ObjectMapper objectMapper;
+
+    /**
+     * IM消息类型
+     */
+    public static final String MODULE = "im";
+    public static final String MSG_NEW_MESSAGE = "NEW_MESSAGE";
+    public static final String MSG_MESSAGE_SENT = "MESSAGE_SENT";
+    public static final String MSG_MESSAGE_ERROR = "MESSAGE_ERROR";
+    public static final String MSG_SUBSCRIBE_REPORT = "SUBSCRIBE_REPORT";
+    public static final String MSG_UNSUBSCRIBE_REPORT = "UNSUBSCRIBE_REPORT";
+
+    /**
+     * 警情订阅关系：reportId -> Set<userId>
+     */
+    private final Map<Long, Set<Long>> reportSubscribers = new ConcurrentHashMap<>();
+
+    /**
+     * 用户订阅关系：userId -> Set<reportId>
+     */
+    private final Map<Long, Set<Long>> userSubscriptions = new ConcurrentHashMap<>();
+
+    /**
+     * 订阅警情消息
+     *
+     * @param userId   用户ID
+     * @param reportId 警情ID
+     */
+    public void subscribeReport(Long userId, Long reportId) {
+        // 添加警情订阅者
+        reportSubscribers.computeIfAbsent(reportId, k -> ConcurrentHashMap.newKeySet()).add(userId);
+
+        // 添加用户订阅
+        userSubscriptions.computeIfAbsent(userId, k -> ConcurrentHashMap.newKeySet()).add(reportId);
+
+        log.info("📥 [IM WebSocket] 用户{}订阅警情{}", userId, reportId);
+    }
+
+    /**
+     * 取消订阅警情消息
+     *
+     * @param userId   用户ID
+     * @param reportId 警情ID
+     */
+    public void unsubscribeReport(Long userId, Long reportId) {
+        // 移除警情订阅者
+        Set<Long> subscribers = reportSubscribers.get(reportId);
+        if (subscribers != null) {
+            subscribers.remove(userId);
+            if (subscribers.isEmpty()) {
+                reportSubscribers.remove(reportId);
+            }
+        }
+
+        // 移除用户订阅
+        Set<Long> subscriptions = userSubscriptions.get(userId);
+        if (subscriptions != null) {
+            subscriptions.remove(reportId);
+            if (subscriptions.isEmpty()) {
+                userSubscriptions.remove(userId);
+            }
+        }
+
+        log.info("📤 [IM WebSocket] 用户{}取消订阅警情{}", userId, reportId);
+    }
+
+    /**
+     * 用户断开连接时清理订阅
+     *
+     * @param userId 用户ID
+     */
+    public void cleanupUserSubscriptions(Long userId) {
+        Set<Long> subscriptions = userSubscriptions.remove(userId);
+        if (subscriptions != null) {
+            for (Long reportId : subscriptions) {
+                Set<Long> subscribers = reportSubscribers.get(reportId);
+                if (subscribers != null) {
+                    subscribers.remove(userId);
+                    if (subscribers.isEmpty()) {
+                        reportSubscribers.remove(reportId);
+                    }
+                }
+            }
+        }
+
+        log.info("🧹 [IM WebSocket] 清理用户{}的订阅", userId);
+    }
+
+    /**
+     * 推送新消息到订阅的用户
+     *
+     * @param reportId     警情ID
+     * @param messageData  消息数据
+     */
+    public int broadcastNewMessage(Long reportId, Map<String, Object> messageData) {
+        Set<Long> subscribers = reportSubscribers.get(reportId);
+        if (subscribers == null || subscribers.isEmpty()) {
+            log.debug("⚠️ [IM WebSocket] 警情{}没有订阅者", reportId);
+            return 0;
+        }
+
+        WebSocketMessage message = WebSocketMessage.business(MODULE, MSG_NEW_MESSAGE, messageData)
+                .setRoom(String.valueOf(reportId));
+
+        int successCount = 0;
+        for (Long userId : subscribers) {
+            if (webSocketTransport.sendToUser(userId, message)) {
+                successCount++;
+            }
+        }
+
+        log.info("✅ [IM WebSocket] 推送新消息到警情{}, 订阅者: {}, 成功: {}",
+                reportId, subscribers.size(), successCount);
+
+        return successCount;
+    }
+
+    /**
+     * 通知消息发送成功
+     *
+     * @param userId       发送者ID
+     * @param messageData  消息数据
+     */
+    public boolean notifyMessageSent(Long userId, Map<String, Object> messageData) {
+        WebSocketMessage message = WebSocketMessage.business(MODULE, MSG_MESSAGE_SENT, messageData);
+
+        boolean success = webSocketTransport.sendToUser(userId, message);
+
+        log.debug("📨 [IM WebSocket] 通知用户{}消息发送成功: {}", userId, success);
+
+        return success;
+    }
+
+    /**
+     * 通知消息发送失败
+     *
+     * @param userId       发送者ID
+     * @param errorMessage 错误消息
+     */
+    public boolean notifyMessageError(Long userId, String errorMessage) {
+        Map<String, Object> data = Map.of("error", errorMessage);
+
+        WebSocketMessage message = WebSocketMessage.business(MODULE, MSG_MESSAGE_ERROR, data);
+
+        boolean success = webSocketTransport.sendToUser(userId, message);
+
+        log.debug("❌ [IM WebSocket] 通知用户{}消息发送失败: {}", userId, success);
+
+        return success;
+    }
+
+    /**
+     * 获取警情的订阅者数量
+     *
+     * @param reportId 警情ID
+     * @return 订阅者数量
+     */
+    public int getSubscriberCount(Long reportId) {
+        Set<Long> subscribers = reportSubscribers.get(reportId);
+        return subscribers != null ? subscribers.size() : 0;
+    }
+
+    /**
+     * 获取用户订阅的警情数量
+     *
+     * @param userId 用户ID
+     * @return 订阅数量
+     */
+    public int getUserSubscriptionCount(Long userId) {
+        Set<Long> subscriptions = userSubscriptions.get(userId);
+        return subscriptions != null ? subscriptions.size() : 0;
+    }
+
+    /**
+     * 获取所有警情订阅统计
+     *
+     * @return 警情ID -> 订阅者数量
+     */
+    public Map<Long, Integer> getReportSubscriberStats() {
+        Map<Long, Integer> stats = new ConcurrentHashMap<>();
+        reportSubscribers.forEach((reportId, subscribers) ->
+                stats.put(reportId, subscribers.size())
+        );
+        return stats;
+    }
+}
